@@ -1,0 +1,29 @@
+# Rust
+target/
+
+#JetBrains
+.idea/
+
+#macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Logs
+*.log
+
+# Device backups
+Backups/
+
+# Device-specific research
+Specific Docs/
+rkdeveloptool/
+
+
+
+
+# Temporary files
+tmp/
+temp/
