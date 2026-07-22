@@ -1,5 +1,6 @@
 use crate::service::Service;
 
+
 pub struct ServiceManager
 {
     services: Vec<Box<dyn Service>>,
@@ -17,11 +18,13 @@ impl ServiceManager
         self.services.push(service);
     }
 
-    pub fn start_all(&self) {
-        for service in &self.services {
-            println!("Starting {}...", service.name());
+    pub fn start_all(&mut self) {
+        for service in &mut self.services {
 
-            service.start();
+            match service.start() {
+                Ok(_) => println!("[OK] {}", service.name()),
+                Err(e) => println!("[FAIL] {} | Err: {}", service.name(), e),
+            }
         }
     }
 }

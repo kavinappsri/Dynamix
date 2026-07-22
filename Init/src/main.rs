@@ -4,6 +4,7 @@ pub mod boot;
 pub mod service;
 pub mod logger_service;
 pub mod service_manager;
+pub mod hardware_service;
 
 fn main() {
     boot::start();

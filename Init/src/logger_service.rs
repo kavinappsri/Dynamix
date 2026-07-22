@@ -1,15 +1,26 @@
 use crate::logger;
-use crate::service::Service;
+use crate::service::{Service, ServiceState};
 
-pub struct LoggerService;
+pub struct LoggerService {
+    state: ServiceState
+}
+
+impl LoggerService {
+    pub fn new() -> Self{
+        Self {
+            state: ServiceState::Created,
+        }
+    }
+}
 
 impl Service for LoggerService {
     fn name(&self) -> &str {
         "Logger"
     }
 
-    fn start(&self) {
+    fn start(&mut self) -> Result<(), String> {
         logger::info("Logger service started.");
+        Ok(())
     }
 
     fn stop(&self) {

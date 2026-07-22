@@ -1,31 +1,47 @@
-use crate::logger;
+use crate::hardware_service::HardwareService;
+use std::time::Instant;
 use crate::logger_service::LoggerService;
 use crate::service_manager::ServiceManager;
+use crate::config;
 
 pub fn start() {
-    logger::info("Starting Dynamix...");
+    println!("========================================");
+    println!("            Dynamix OS");
+    println!("========================================");
+    println!();
+    println!("Starting boot sequence...");
+    println!();
 
-    initialize_hardware();
+    let init_start = Instant::now();
 
-    load_configuration();
+    match config::load() {
 
-    initialize_services();
+        Ok(contents) => {
+            println!("[OK] Configuration loaded.");
+            println!("{}", contents);
+        }
+
+        Err(error) => {
+            println!("[FAIL] Configuration: {}", error);
+        }
+
+    }
+
+    let config = config::Config::new();
+    match config {
+        Ok(configobj) => {
+            println!("{}", configobj.get("hostname").unwrap().to_string())
+        },
+        Err(_) => todo!()
+    }
+
 
     let mut manager = ServiceManager::new();
 
-    manager.register(Box::new(LoggerService));
+    manager.register(Box::new(LoggerService::new()));
+    manager.register(Box::new(HardwareService::new()));
 
     manager.start_all();
-}
 
-fn initialize_hardware() {
-    logger::info("Initializing hardware...");
-}
-
-fn load_configuration() {
-    logger::info("Loading configuration...");
-}
-
-fn initialize_services() {
-    logger::info("Initializing services...");
+    println!("Init completed in {:.2?}", init_start.elapsed())
 }
