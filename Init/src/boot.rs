@@ -13,24 +13,14 @@ pub fn start() {
     println!();
 
     let init_start = Instant::now();
-
-    match config::load() {
-
-        Ok(contents) => {
-            println!("[OK] Configuration loaded.");
-            println!("{}", contents);
-        }
-
-        Err(error) => {
-            println!("[FAIL] Configuration: {}", error);
-        }
-
-    }
-
-    let config = config::Config::new();
+    
+    let config = config::Config::new("../config/dynamix.conf");
     match config {
         Ok(configobj) => {
-            println!("{}", configobj.get("hostname").unwrap().to_string())
+            println!("hostname: {}", configobj.get("hostname").unwrap().to_string());
+            println!("verbose boot: {}", configobj.get_bool("boot.verbose").unwrap());
+            println!("theme: {}", configobj.get("theme").unwrap().to_string());
+            println!("ui scale: {}", configobj.get("ui.scale").unwrap().to_string());
         },
         Err(_) => todo!()
     }
