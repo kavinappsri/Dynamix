@@ -2,13 +2,13 @@ use crate::logger;
 use crate::service::{Service, ServiceState};
 
 pub struct LoggerService {
-    state: ServiceState
+    _state: ServiceState
 }
 
 impl LoggerService {
     pub fn new() -> Self{
         Self {
-            state: ServiceState::Created,
+            _state: ServiceState::Created,
         }
     }
 }
