@@ -9,7 +9,6 @@ pub mod filesystem_service;
 pub mod device_manager;
 pub mod panic_handler;
 pub mod boot_context;
-pub mod desktop;
 pub mod display;
 
 fn main() {
