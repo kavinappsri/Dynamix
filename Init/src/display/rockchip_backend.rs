@@ -22,8 +22,15 @@ impl DisplayBackend for RockchipDisplayBackend {
         0
     }
 
-    fn clear(&mut self) {
+    fn clear(&mut self, color: u32) {
 
     }
+    fn mainloop(&mut self) {
+        
+    }
+    fn present(&mut self) {
+        
+    }
+    
 
 }

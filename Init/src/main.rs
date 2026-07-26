@@ -10,7 +10,13 @@ pub mod device_manager;
 pub mod panic_handler;
 pub mod boot_context;
 pub mod display;
+pub mod graphics;
 
 fn main() {
     boot::start();
+    /*
+    let event_loop = EventLoop::new().unwrap();
+    let mut app = TestWindow::new();
+    event_loop.run_app(&mut app).unwrap();
+     */
 }

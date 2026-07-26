@@ -1,4 +1,4 @@
-use crate::display::mock_backend::MockDisplayBackend;
+use crate::display::winit_backend::WinitDisplayBackend;
 use crate::display::display::Display;
 use crate::hardware_service::HardwareService;
 use std::time::Instant;
@@ -40,10 +40,15 @@ pub fn start() {
 
     manager.start_all();
 
-    let mut display = Display::new(Box::new(MockDisplayBackend::new()));
+
+    let mut display = Display::new(Box::new(WinitDisplayBackend::new()));
     let _ = display.initialize();
-    display.clear();
+
     println!("Display: {}x{}", display.width(), display.height());
 
-    println!("Init completed in {:.2?}", init_start.elapsed())
+    println!("Init completed in {:.2?}", init_start.elapsed());
+
+    display.mainloop();
+
+
 }

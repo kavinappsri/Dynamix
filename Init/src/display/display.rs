@@ -15,8 +15,8 @@ impl Display {
         self.backend.initialize()
     }
 
-    pub fn clear(&mut self) {
-        self.backend.clear();
+    pub fn clear(&mut self, color: u32) {
+        self.backend.clear(color);
     }
 
     pub fn width(&self) -> u32 {
@@ -25,5 +25,8 @@ impl Display {
 
     pub fn height(&self) -> u32 {
         self.backend.height()
+    }
+    pub fn mainloop(&mut self) {
+        self.backend.mainloop()
     }
 }
