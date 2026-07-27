@@ -10,6 +10,7 @@ target/
 # Python
 __pycache__/
 *.pyc
+/.venv/
 
 # Logs
 *.log
@@ -18,7 +19,7 @@ __pycache__/
 Backups/
 
 # Device-specific research
-Specific Docs/
+Docs/
 rkdeveloptool/
 
 

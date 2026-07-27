@@ -1,4 +1,5 @@
 use super::backend::DisplayBackend;
+use super::display::Framebuffer;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -13,6 +14,7 @@ pub struct WinitDisplayBackend {
     window: Option<Rc<Window>>,
     context: Option<Context<Rc<Window>>>,
     surface: Option<Surface<Rc<Window>, Rc<Window>>>,
+    framebuffer: Option<Framebuffer>,
 }
 
 impl WinitDisplayBackend {
@@ -24,6 +26,7 @@ impl WinitDisplayBackend {
             window: None,
             context: None,
             surface: None,
+            framebuffer: None,
         }
     }
 }
@@ -31,7 +34,6 @@ impl WinitDisplayBackend {
 impl DisplayBackend for WinitDisplayBackend {
     fn initialize(&mut self) -> Result<(), String> {
         self.initialized = true;
-        // uhhhh ... the initializing code is in the resumed callback isnt it...how to i call that here?
         Ok(())
     }
 
@@ -63,8 +65,17 @@ impl DisplayBackend for WinitDisplayBackend {
         let event_loop = EventLoop::new().unwrap();
         event_loop.run_app(self).unwrap();
     }
-    fn present(&mut self) {
+    fn present(&mut self, framebuffer: &Framebuffer) {
+        let mut buffer = self
+            .surface
+            .as_mut()
+            .unwrap()
+            .buffer_mut()
+            .unwrap();
 
+        for (src, dst) in framebuffer.pixels.iter().zip(buffer.iter_mut()) {
+            *dst = *src
+        }
     }
 }
 
@@ -87,7 +98,9 @@ impl ApplicationHandler for WinitDisplayBackend {
 
         let context = Context::new(window.clone()).expect("Failed to create softbuffer context");
         let surface = Surface::new(&context, window.clone()).expect("Failed to create surface");
+        let framebuffer = Framebuffer::new(self.width, self.height);
 
+        self.framebuffer = Some(framebuffer);
         self.context = Some(context);
         self.surface = Some(surface);
 

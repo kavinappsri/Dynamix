@@ -1,3 +1,4 @@
+use crate::display::display::Framebuffer;
 use super::backend::DisplayBackend;
 
 
@@ -28,7 +29,7 @@ impl DisplayBackend for RockchipDisplayBackend {
     fn mainloop(&mut self) {
         
     }
-    fn present(&mut self) {
+    fn present(&mut self, framebuffer: &Framebuffer) {
         
     }
     
