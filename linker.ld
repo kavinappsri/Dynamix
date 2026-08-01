@@ -2,7 +2,7 @@ ENTRY(_start)
 
 SECTIONS
 {
-    . = 0x40000000;
+    . = 0x40200000;
 
     .text :
     {
@@ -22,6 +22,14 @@ SECTIONS
 
     .bss :
     {
+        . = ALIGN(16);
+
+        _stack_bottom = .;
+
+        . += 4096;
+
+        _stack_top = .;
+
         *(.bss*)
     }
 }
