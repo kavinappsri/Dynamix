@@ -25,13 +25,26 @@ pub extern "C" fn rust_main() -> ! {
     let mut console = Console::new(uart);
     let mut command_buffer = [0u8;128];
 
-    console.write("Type Something:");
-    let _length = console.readln(&mut command_buffer);
-    console.writeln("Test");
-    console.write_bytes(&command_buffer);
+    loop {
+        console.write("dynamix <~ ");
+        let length = console.readln(&mut command_buffer);
+        console.writeln("");
 
 
+        match &command_buffer[..length] {
+            b"shutdown" => {
+                console.writeln("Shutting down");
+                unsafe {
+                    core::arch::asm!(
+                    "hvc #0",
+                    in("x0") 0x84000008u64,
+                    options(nostack, nomem)
+                    );
+                }
+            }
+            _ => console.writeln("Unrecognized Command")
+        }
 
-
-    loop {}
+        command_buffer.fill(0);
+    }
 }

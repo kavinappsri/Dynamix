@@ -23,13 +23,18 @@ SECTIONS
     .bss :
     {
         . = ALIGN(16);
-
-        _stack_bottom = .;
-
-        . += 4096;
-
-        _stack_top = .;
-
+        _bss_start = .;
         *(.bss*)
+        . = ALIGN(16);
+        _bss_end = .;
+    }
+
+    .stack (NOLOAD) :
+    {
+        . = ALIGN(16);
+        _stack_bottom = .;
+        . += 4096;
+        . = ALIGN(16);
+        _stack_top = .;
     }
 }

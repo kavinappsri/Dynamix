@@ -14,8 +14,7 @@ impl Uart {
     }
 
     pub fn write_byte(&self, byte: u8) {
-
-
+        
         unsafe {
             while ((self.base + Uart::FR) as *const u32).read_volatile() & (1 << 5) != 0 {}
 
