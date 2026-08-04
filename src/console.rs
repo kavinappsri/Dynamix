@@ -39,9 +39,8 @@ impl Console {
                     self.uart.write_byte(b'\n');
                     break;
                 }
-
-                //Delete
-                b'\x08' => {
+                // Backspace (0x08 = BS / Ctrl+H, 0x7F = DEL / Backspace key)
+                b'\x08' | b'\x7F' => {
                     if index > 0 {
                         index -= 1;
 
@@ -50,7 +49,6 @@ impl Console {
                         self.uart.write_byte(b'\x08');
                     }
                 }
-
                 _ => {
                     if index < buffer.len() {
                         buffer[index] = byte;
