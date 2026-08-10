@@ -1,6 +1,3 @@
-# Rust
-target/
-
 #JetBrains
 .idea/
 
@@ -10,25 +7,14 @@ target/
 # Python
 __pycache__/
 *.pyc
+/.venv/
 
 # Logs
 *.log
 
-# Device backups
-Backups/
-
 # Device-specific research
-Specific Docs/
-rkdeveloptool/
-
-
-
-
-# Temporary files
-tmp/
-temp/
+Device_Docs/
 
 # Added by cargo
-
 /target
 /.cargo/
