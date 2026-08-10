@@ -6,3 +6,8 @@ rustflags = [
     "-C",
     "link-arg=-Tlinker.ld",
 ]
+runner = [
+    "sh",
+    "-c",
+    "rust-objcopy -O binary \"$0\" \"$0.bin\" && qemu-system-aarch64 -machine virt -cpu cortex-a72 -nographic -monitor none -kernel \"$0.bin\""
+]

@@ -26,7 +26,15 @@ impl Console {
         }
     }
 
-    pub fn readln(&mut self, buffer: &mut [u8]) -> usize {
+    pub fn write_hex(&self, hex: u64) {
+        let hex_chars = b"0123456789ABCDEF";
+        for i in (0..16).rev() {
+            let byte = ((hex >> (i * 4)) & 0xF) as usize;
+            self.write_bytes(&[hex_chars[byte]]);
+        }
+    }
+
+    pub fn read_ln(&mut self, buffer: &mut [u8]) -> usize {
         let mut index = 0;
 
         loop {

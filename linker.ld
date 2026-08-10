@@ -3,6 +3,7 @@ ENTRY(_start)
 SECTIONS
 {
     . = 0x40200000;
+    _kernel_start = .;
 
     .text :
     {
@@ -37,4 +38,7 @@ SECTIONS
         . = ALIGN(16);
         _stack_top = .;
     }
+
+    _kernel_end = .;
+    _image_size = _kernel_end - _kernel_start;
 }
