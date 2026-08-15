@@ -1,21 +1,23 @@
 #![no_std]
 #![no_main]
 
-pub mod uart;
 pub mod console;
-pub mod exceptions;
 pub mod dtb;
+pub mod exceptions;
 pub mod fw_cfg;
-pub mod ramfb;
 pub mod power;
+pub mod ramfb;
 pub mod timer;
 
-use core::panic::PanicInfo;
 use core::arch::global_asm;
+use core::panic::PanicInfo;
+
 use crate::console::Console;
 use crate::dtb::Dtb;
 use crate::fw_cfg::FwCfg;
 use crate::ramfb::RamFb;
+
+use hal::{aarch64::pl011::Pl011Uart, probe_serial, Serial};
 
 global_asm!(include_str!("boot.s"));
 
@@ -29,12 +31,40 @@ unsafe impl Sync for Framebuffer {}
 static FRAMEBUFFER: Framebuffer = Framebuffer([0; WIDTH * HEIGHT]);
 
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    let uart = uart::Uart::new(0x09000000);
-    uart.write_string("PANIC: Dynamix stage fright\n");
+fn panic(info: &PanicInfo) -> ! {
+    // SAFETY: QEMU virt maps the early PL011 UART at this fixed address.
+    let uart = unsafe { Pl011Uart::new(0x09000000) };
+    uart.write_str("PANIC: Dynamix stage fright\n");
+    uart.write_str("LOCATION: ");
+
+    if let Some(loc) = info.location() {
+        uart.write_str("at ");
+        uart.write_str(loc.file());
+        uart.write_str(":");
+
+        // Convert u32 line number to a stack &str
+        let mut line_buf = [0u8; 10];
+        let mut n = loc.line();
+        let mut idx = line_buf.len();
+
+        if n == 0 {
+            idx -= 1;
+            line_buf[idx] = b'0';
+        } else {
+            while n > 0 && idx > 0 {
+                idx -= 1;
+                line_buf[idx] = b'0' + (n % 10) as u8;
+                n /= 10;
+            }
+        }
+
+        if let Ok(line_str) = core::str::from_utf8(&line_buf[idx..]) {
+            uart.write_str(line_str);
+        }
+    }
+
     loop {}
 }
-
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
@@ -48,9 +78,7 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
     };
 
     // Set up UART & Console
-    let uart_node = dtb.find_compatible("arm,pl011").expect("UART node not found");
-    let (uart_base, _) = uart_node.reg().expect("UART reg not found");
-    let uart = uart::Uart::new(uart_base as usize);
+    let uart = probe_serial(&dtb).expect("No compatible serial driver in DTB");
     let mut console = Console::new(uart);
     let mut command_buffer = [0u8; 128];
 
@@ -59,7 +87,9 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
 
     // Set up FW_CFG
     console.writeln("[+] Attempting to find fw_cfg");
-    let fw_cfg_node = dtb.find_compatible("qemu,fw-cfg-mmio").expect("fw_cfg Not Found");
+    let fw_cfg_node = dtb
+        .find_compatible("qemu,fw-cfg-mmio")
+        .expect("fw_cfg Not Found");
     let (fw_cfg_base, _) = fw_cfg_node.reg().expect("Failed to read fw_cfg reg");
     console.writeln("[+] Found fw_cfg");
     let fw_cfg = FwCfg::new(fw_cfg_base as usize);
@@ -67,8 +97,7 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
     // Set up Framebuffer
     console.writeln("[+] Setting up Framebuffer");
     let fb_ptr = FRAMEBUFFER.0.as_ptr() as *mut u32;
-    let display = RamFb::new(&fw_cfg, fb_ptr, WIDTH, HEIGHT)
-        .expect("Failed to initialize RamFb");
+    let display = RamFb::new(&fw_cfg, fb_ptr, WIDTH, HEIGHT).expect("Failed to initialize RamFb");
 
     display.fill_screen(0x00_00_00_00);
 
@@ -79,10 +108,8 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
 
     //Automatic d-shut - ONLY FOR DEV TESTING
     timer::delay_ms(5000, frq);
-    
+
     power::shut();
-
-
 
     // Main Command Loop
     loop {

@@ -16,6 +16,13 @@ SECTIONS
         *(.rodata*)
     }
 
+    .drivers : ALIGN(16)
+    {
+        __start_serial_drivers = .;
+        KEEP(*(.drivers.serial))
+        __stop_serial_drivers = .;
+    }
+
     .data :
     {
         *(.data*)

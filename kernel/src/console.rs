@@ -1,23 +1,21 @@
-use crate::uart::Uart;
+use hal::Serial;
 
-pub struct Console {
-    uart: Uart,
+pub struct Console<'a> {
+    uart: &'a dyn Serial,
 }
 
-impl Console {
-    pub const fn new(uart: Uart) -> Self {
-        Self {
-            uart,
-        }
+impl<'a> Console<'a> {
+    pub const fn new(uart: &'a dyn Serial) -> Self {
+        Self { uart }
     }
 
     pub fn write(&self, text: &str) {
-        self.uart.write_string(text);
+        self.uart.write_str(text);
     }
 
     pub fn writeln(&self, text: &str) {
-        self.uart.write_string(text);
-        self.uart.write_string("\n");
+        self.uart.write_str(text);
+        self.uart.write_str("\n");
     }
 
     pub fn write_bytes(&self, bytes: &[u8]) {
@@ -41,7 +39,6 @@ impl Console {
             let byte = self.uart.read_byte();
 
             match byte {
-
                 //Return
                 b'\n' | b'\r' => {
                     self.uart.write_byte(b'\n');

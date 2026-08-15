@@ -39,16 +39,16 @@ impl<'a> Dtb<'a> {
         let raw_ptr = ptr as *const u32;
 
         // Read magic (DTB values are big-endian)
-        let magic = unsafe {u32::from_be(raw_ptr.add(0).read_unaligned())};
+        let magic = unsafe { u32::from_be(raw_ptr.add(0).read_unaligned()) };
         if magic != FDT_MAGIC {
             return Err(DtbError::InvalidMagic);
         }
 
-        let total_size = unsafe{u32::from_be(raw_ptr.add(1).read_unaligned()) as usize};
-        let struct_off = unsafe{u32::from_be(raw_ptr.add(2).read_unaligned()) as usize};
-        let strings_off = unsafe{u32::from_be(raw_ptr.add(3).read_unaligned()) as usize};
+        let total_size = unsafe { u32::from_be(raw_ptr.add(1).read_unaligned()) as usize };
+        let struct_off = unsafe { u32::from_be(raw_ptr.add(2).read_unaligned()) as usize };
+        let strings_off = unsafe { u32::from_be(raw_ptr.add(3).read_unaligned()) as usize };
 
-        let slice = unsafe{core::slice::from_raw_parts(ptr as *const u8, total_size)};
+        let slice = unsafe { core::slice::from_raw_parts(ptr as *const u8, total_size) };
 
         Ok(Self {
             slice,
@@ -99,7 +99,6 @@ impl<'a> Node<'a> {
     pub fn name(&self) -> &'a str {
         self.name
     }
-
 
     /// Checks if this node's `compatible` property contains the specified string.
     pub fn is_compatible(&self, compat_str: &str) -> bool {
@@ -318,4 +317,11 @@ fn read_be_u32(slice: &[u8], offset: usize) -> u32 {
         slice[offset + 3],
     ];
     u32::from_be_bytes(bytes)
+}
+
+impl hal::DeviceTree for Dtb<'_> {
+    fn compatible_address(&self, compatible: &str) -> Option<usize> {
+        Dtb::find_compatible(self, compatible)
+            .and_then(|node| node.reg().map(|(base, _)| base as usize))
+    }
 }

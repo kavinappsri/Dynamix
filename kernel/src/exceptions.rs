@@ -1,5 +1,5 @@
 use core::arch::global_asm;
-use crate::uart::Uart;
+use hal::{aarch64::pl011::Pl011Uart, Serial};
 
 global_asm!(include_str!("vectors.s"));
 
@@ -38,33 +38,25 @@ const SOURCES: [&str; 4] = [
     "Lower EL (AArch32)",
 ];
 
-const KINDS: [&str; 4] = [
-    "Synchronous",
-    "IRQ",
-    "FIQ",
-    "SError",
-];
+const KINDS: [&str; 4] = ["Synchronous", "IRQ", "FIQ", "SError"];
 
 #[unsafe(no_mangle)]
-pub extern "C" fn rust_exception_handler(
-    ctx: &ExceptionContext,
-    source: usize,
-    kind: usize,
-) {
-    let uart = Uart::new(0x09000000);
+pub extern "C" fn rust_exception_handler(ctx: &ExceptionContext, source: usize, kind: usize) {
+    // SAFETY: QEMU virt maps the early PL011 UART at this fixed address.
+    let uart = unsafe { Pl011Uart::new(0x09000000) };
 
-    uart.write_string("\n=== EXCEPTION TRIGGERED ===\n");
-    uart.write_string("Source: ");
-    uart.write_string(SOURCES.get(source).unwrap_or(&"Unknown"));
-    uart.write_string("\nType:   ");
-    uart.write_string(KINDS.get(kind).unwrap_or(&"Unknown"));
-    uart.write_string("\n\n");
+    uart.write_str("\n=== EXCEPTION TRIGGERED ===\n");
+    uart.write_str("Source: ");
+    uart.write_str(SOURCES.get(source).unwrap_or(&"Unknown"));
+    uart.write_str("\nType:   ");
+    uart.write_str(KINDS.get(kind).unwrap_or(&"Unknown"));
+    uart.write_str("\n\n");
 
     let ec = ctx.esr >> 26;
 
-    uart.write_string("Exception Class: ");
-    uart.write_string(exception_class_name(ec));
-    uart.write_string("\n\n");
+    uart.write_str("Exception Class: ");
+    uart.write_str(exception_class_name(ec));
+    uart.write_str("\n\n");
 
     // Hex dump registers
     print_hex(&uart, "ELR_EL1 (PC)", ctx.elr);
@@ -72,21 +64,21 @@ pub extern "C" fn rust_exception_handler(
     print_hex(&uart, "ESR_EL1 (Syndrome)", ctx.esr);
     print_hex(&uart, "SPSR_EL1", ctx.spsr);
 
-    uart.write_string("\nSystem halted.\n");
+    uart.write_str("\nSystem halted.\n");
 
     loop {}
 }
 
-fn print_hex(uart: &Uart, label: &str, val: u64) {
-    uart.write_string(label);
-    uart.write_string(": 0x");
+fn print_hex(uart: &Pl011Uart, label: &str, val: u64) {
+    uart.write_str(label);
+    uart.write_str(": 0x");
 
     let hex_chars = b"0123456789ABCDEF";
     for i in (0..16).rev() {
         let byte = ((val >> (i * 4)) & 0xF) as usize;
         uart.write_byte(hex_chars[byte]);
     }
-    uart.write_string("\n");
+    uart.write_str("\n");
 }
 
 fn exception_class_name(ec: u64) -> &'static str {
