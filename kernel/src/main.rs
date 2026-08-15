@@ -1,4 +1,3 @@
-// main.rs
 #![no_std]
 #![no_main]
 
@@ -8,6 +7,8 @@ pub mod exceptions;
 pub mod dtb;
 pub mod fw_cfg;
 pub mod ramfb;
+pub mod power;
+pub mod timer;
 
 use core::panic::PanicInfo;
 use core::arch::global_asm;
@@ -33,6 +34,7 @@ fn panic(_info: &PanicInfo) -> ! {
     uart.write_string("PANIC: Dynamix stage fright\n");
     loop {}
 }
+
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
@@ -72,6 +74,16 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
 
     display.draw_logo();
 
+    //Get frq
+    let frq = timer::get_cntfrq();
+
+    //Automatic d-shut - ONLY FOR DEV TESTING
+    timer::delay_ms(5000, frq);
+    
+    power::shut();
+
+
+
     // Main Command Loop
     loop {
         console.write("dynamix <~ ");
@@ -81,13 +93,7 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
         match &command_buffer[..length] {
             b"shutdown" => {
                 console.writeln("Shutting down");
-                unsafe {
-                    core::arch::asm!(
-                    "hvc #0",
-                    in("x0") 0x84000008u64,
-                    options(nostack, nomem)
-                    );
-                }
+                power::shut();
             }
             b"logo" => {
                 display.fill_screen(0x00_00_00_00);
@@ -118,6 +124,14 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
             b"yellow" => {
                 display.fill_screen(0x00_FF_FF_00);
                 console.writeln("Screen set to Yellow");
+            }
+            b"d-shut" => {
+                timer::delay_ms(5000, frq);
+
+                power::shut()
+            }
+            b"kavin" => {
+                console.writeln("Kavin is always better than gootam");
             }
             _ => console.writeln("Unrecognized Command"),
         }
