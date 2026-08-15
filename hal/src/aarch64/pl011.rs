@@ -1,6 +1,6 @@
 //! ARM PrimeCell PL011 polling serial driver.
 
-use crate::{mmio::Mmio, register_serial_driver, sync::StaticCell, Serial};
+use crate::{Serial, mmio::Mmio, register_serial_driver, sync::StaticCell};
 
 /// A PL011 UART whose registers are directly mapped into the address space.
 pub struct Pl011Uart {
@@ -17,6 +17,14 @@ impl Pl011Uart {
     ///
     /// # Safety
     /// `base` must be a mapped PL011 register block.
+    /// It must remain exclusively usable by this driver while the returned
+    /// value is used.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let uart = unsafe { hal::aarch64::pl011::Pl011Uart::new(0x0900_0000) };
+    /// ```
     pub const unsafe fn new(base: usize) -> Self {
         Self {
             // SAFETY: upheld by this constructor's contract.
@@ -26,11 +34,13 @@ impl Pl011Uart {
 }
 
 impl Serial for Pl011Uart {
+    /// Polls until the transmit FIFO has capacity, then transmits `byte`.
     fn write_byte(&self, byte: u8) {
         while self.registers.read32(Self::FLAG) & Self::FLAG_TRANSMIT_FULL != 0 {}
         self.registers.write32(Self::DATA, u32::from(byte));
     }
 
+    /// Polls until a received byte is available and returns it.
     fn read_byte(&self) -> u8 {
         while self.registers.read32(Self::FLAG) & Self::FLAG_RECEIVE_EMPTY != 0 {}
         self.registers.read32(Self::DATA) as u8

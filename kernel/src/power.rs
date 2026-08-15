@@ -1,10 +1,11 @@
-//! Provides a API to control general power systems
+//! Platform power-control primitives.
 
 use core::arch::asm;
 
-/// Shuts down the device
+/// Requests a PSCI system shutdown through an HVC call.
 ///
-/// This function shuts down the device its run on
+/// The current platform path uses an environment that handles the PSCI
+/// `SYSTEM_OFF` function ID through `hvc #0`; it does not return on success.
 #[inline]
 pub fn shut() {
     unsafe {

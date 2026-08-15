@@ -1,5 +1,9 @@
-// Device Tree Blob (DTB)
-//
+//! Minimal reader for bootloader-provided Flattened Device Tree blobs.
+//!
+//! This module validates the FDT header and exposes a forward-only node
+//! iterator. It is intentionally a small early-boot parser rather than a full
+//! device-tree implementation: `reg` decoding supports common one- and
+//! two-cell address/size pairs and compatible matching is string-based.
 
 const FDT_MAGIC: u32 = 0xD00DFEED;
 
@@ -12,9 +16,13 @@ const FDT_END: u32 = 9;
 /// Errors that can occur when validating or reading a DTB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DtbError {
+    /// The bootloader did not supply a DTB address.
     NullPointer,
+    /// The FDT header magic was not `0xD00D_FEED`.
     InvalidMagic,
+    /// A requested operation would address bytes outside the DTB.
     OutOfBounds,
+    /// A requested node was not present in the tree.
     NodeNotFound,
 }
 
@@ -27,10 +35,16 @@ pub struct Dtb<'a> {
 }
 
 impl<'a> Dtb<'a> {
-    /// Creates a DTB instance from a raw physical memory pointer passed by the bootloader.
+    /// Creates a DTB view from a raw physical memory pointer passed by the bootloader.
     ///
     /// # Safety
     /// The caller must ensure `ptr` points to valid, accessible memory containing a DTB.
+    /// Its header's total-size field must describe a readable contiguous range.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DtbError::NullPointer`] for a zero pointer and
+    /// [`DtbError::InvalidMagic`] if the header does not contain an FDT magic.
     pub unsafe fn from_ptr(ptr: usize) -> Result<Self, DtbError> {
         if ptr == 0 {
             return Err(DtbError::NullPointer);
@@ -57,7 +71,10 @@ impl<'a> Dtb<'a> {
         })
     }
 
-    /// Finds the first device node compatible with the specified string (e.g., `"arm,pl011"`).
+    /// Finds the first device node compatible with `compatible`.
+    ///
+    /// A match is performed against the NUL-separated `compatible` property,
+    /// such as `"arm,pl011"`.
     pub fn find_compatible(&self, compatible: &str) -> Option<Node<'a>> {
         for node in self.nodes() {
             if node.is_compatible(compatible) {
@@ -67,7 +84,10 @@ impl<'a> Dtb<'a> {
         None
     }
 
-    /// Finds a node by its exact name or partial prefix (e.g., `"pl011@9000000"` or `"uart"`).
+    /// Finds the first node whose name contains `name_part`.
+    ///
+    /// This is a substring search, not a path lookup; use it only when that
+    /// looser matching behavior is intended.
     pub fn find_node(&self, name_part: &str) -> Option<Node<'a>> {
         for node in self.nodes() {
             if node.name().contains(name_part) {
@@ -77,7 +97,7 @@ impl<'a> Dtb<'a> {
         None
     }
 
-    /// Returns an iterator over all nodes in the Device Tree.
+    /// Returns an iterator that walks all begin-node tokens in tree order.
     pub fn nodes(&self) -> NodeIterator<'a> {
         NodeIterator {
             dtb: *self,
@@ -86,7 +106,7 @@ impl<'a> Dtb<'a> {
     }
 }
 
-/// Represents a single node in the Device Tree (e.g., `/soc/uart@9000000`).
+/// A node in the Device Tree (for example, `/soc/uart@9000000`).
 #[derive(Debug, Clone, Copy)]
 pub struct Node<'a> {
     dtb: Dtb<'a>,
@@ -95,12 +115,12 @@ pub struct Node<'a> {
 }
 
 impl<'a> Node<'a> {
-    /// Returns the name of the node.
+    /// Returns the node's local name, or `/` for the root node.
     pub fn name(&self) -> &'a str {
         self.name
     }
 
-    /// Checks if this node's `compatible` property contains the specified string.
+    /// Returns whether the node's `compatible` property contains `compat_str`.
     pub fn is_compatible(&self, compat_str: &str) -> bool {
         if let Some(prop) = self.property("compatible") {
             let target_bytes = compat_str.as_bytes();
@@ -116,7 +136,7 @@ impl<'a> Node<'a> {
         false
     }
 
-    /// Looks up a specific property by name on this node.
+    /// Looks up a property by its exact name on this node.
     pub fn property(&self, target_name: &str) -> Option<Property<'a>> {
         let mut curr = self.struct_offset;
 
@@ -158,7 +178,7 @@ impl<'a> Node<'a> {
         None
     }
 
-    /// Parses the `reg` property to return the device's physical base address and size.
+    /// Parses the `reg` property as `(physical_base, size)`.
     /// Supports standard 64-bit addresses (`#address-cells = <2>`, `#size-cells = <2>`).
     pub fn reg(&self) -> Option<(u64, u64)> {
         let prop = self.property("reg")?;
@@ -187,7 +207,7 @@ impl<'a> Node<'a> {
     }
 }
 
-/// Represents a key-value property attached to a DTB node.
+/// A key-value property attached to a [`Node`].
 #[derive(Debug, Clone, Copy)]
 pub struct Property<'a> {
     name: &'a str,
@@ -195,15 +215,17 @@ pub struct Property<'a> {
 }
 
 impl<'a> Property<'a> {
+    /// Returns the property name from the DTB string table.
     pub fn name(&self) -> &'a str {
         self.name
     }
 
+    /// Returns the raw, big-endian property bytes.
     pub fn value(&self) -> &'a [u8] {
         self.value
     }
 
-    /// Reads property value as a UTF-8 string (strips trailing null byte if present).
+    /// Interprets the property value as UTF-8, removing one trailing NUL byte.
     pub fn as_str(&self) -> Option<&'a str> {
         let bytes = if self.value.ends_with(&[0]) {
             &self.value[..self.value.len() - 1]
@@ -213,7 +235,7 @@ impl<'a> Property<'a> {
         core::str::from_utf8(bytes).ok()
     }
 
-    /// Reads property value as a 32-bit big-endian integer.
+    /// Interprets the first four property bytes as a big-endian `u32`.
     pub fn as_u32(&self) -> Option<u32> {
         if self.value.len() >= 4 {
             Some(read_be_u32(self.value, 0))
@@ -222,7 +244,7 @@ impl<'a> Property<'a> {
         }
     }
 
-    /// Reads property value as a 64-bit big-endian integer.
+    /// Interprets the first eight property bytes as a big-endian `u64`.
     pub fn as_u64(&self) -> Option<u64> {
         if self.value.len() >= 8 {
             let hi = read_be_u32(self.value, 0) as u64;
@@ -234,7 +256,7 @@ impl<'a> Property<'a> {
     }
 }
 
-/// Iterator for walking through all nodes in the DTB.
+/// Iterator that yields nodes in Flattened Device Tree structure-block order.
 pub struct NodeIterator<'a> {
     dtb: Dtb<'a>,
     curr_offset: usize,

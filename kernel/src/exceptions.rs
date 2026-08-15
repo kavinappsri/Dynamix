@@ -1,5 +1,7 @@
+//! AArch64 EL1 exception-vector initialization and diagnostic reporting.
+
 use core::arch::global_asm;
-use hal::{aarch64::pl011::Pl011Uart, Serial};
+use hal::{Serial, aarch64::pl011::Pl011Uart};
 
 global_asm!(include_str!("vectors.s"));
 
@@ -9,17 +11,28 @@ unsafe extern "C" {
 
 #[repr(C)]
 #[derive(Debug)]
+/// Register state captured by the assembly exception vector before Rust runs.
+///
+/// Its `repr(C)` layout must stay synchronized with `vectors.s`.
 pub struct ExceptionContext {
+    /// General-purpose registers `x0` through `x29`.
     pub gpr: [u64; 30], // x0 - x29
-    pub lr: u64,        // x30 (Link Register)
-    pub elr: u64,       // Exception Link Register (Instruction address that faulted)
-    pub spsr: u64,      // Saved Program Status Register
-    pub esr: u64,       // Exception Syndrome Register
-    pub far: u64,       // Fault Address Register (Memory address involved in fault)
-    _pad: u64,          // Padding to keep struct 16-byte aligned
+    /// Link register (`x30`).
+    pub lr: u64, // x30 (Link Register)
+    /// Exception Link Register, the instruction address that faulted.
+    pub elr: u64, // Exception Link Register (Instruction address that faulted)
+    /// Saved processor state at exception entry.
+    pub spsr: u64, // Saved Program Status Register
+    /// Exception Syndrome Register.
+    pub esr: u64, // Exception Syndrome Register
+    /// Fault Address Register, where applicable.
+    pub far: u64, // Fault Address Register (Memory address involved in fault)
+    _pad: u64, // Padding to keep struct 16-byte aligned
 }
 
-/// Sets VBAR_EL1 to point to assembly vector table.
+/// Installs the assembly exception table in `VBAR_EL1`.
+///
+/// This must run at EL1 before exceptions are enabled.
 pub fn init() {
     unsafe {
         let vector_addr = &vector_table_el1 as *const _ as u64;
@@ -41,6 +54,15 @@ const SOURCES: [&str; 4] = [
 const KINDS: [&str; 4] = ["Synchronous", "IRQ", "FIQ", "SError"];
 
 #[unsafe(no_mangle)]
+/// Handles an exception forwarded by the assembly vector table.
+///
+/// The function reports the captured state through QEMU's early PL011 UART and
+/// then halts permanently. `source` and `kind` are vector-table indices passed
+/// by `vectors.s`; unknown values are rendered as `Unknown`.
+///
+/// # Panics
+///
+/// This handler itself does not panic, but it never returns.
 pub extern "C" fn rust_exception_handler(ctx: &ExceptionContext, source: usize, kind: usize) {
     // SAFETY: QEMU virt maps the early PL011 UART at this fixed address.
     let uart = unsafe { Pl011Uart::new(0x09000000) };
