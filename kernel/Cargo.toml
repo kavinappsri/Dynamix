@@ -1,0 +1,13 @@
+[package]
+name = "kernel"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+test = false
+bench = false
+name = "dynamix_kernel"
+path = "src/main.rs"
+
+[dependencies]
+hal = { path = "../hal" }

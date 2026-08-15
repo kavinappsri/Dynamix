@@ -1,0 +1,19 @@
+[package]
+name = "hal"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+test = false
+bench = false
+
+[features]
+default = ["qemu-virt"]
+
+qemu-virt = ["pl011"]
+rk3216 = []
+
+pl011 = []
+
+
+[dependencies]

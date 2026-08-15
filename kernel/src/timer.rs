@@ -1,8 +1,8 @@
-//! provides basic time-related functions during boot
+//! AArch64 architectural timer access for early boot delays.
 
 use core::arch::asm;
 
-/// Returns the tick frequency of the clock
+/// Returns the architectural counter frequency in ticks per second.
 #[inline(always)]
 pub fn get_cntfrq() -> u64 {
     let val: u64;
@@ -16,7 +16,7 @@ pub fn get_cntfrq() -> u64 {
     val
 }
 
-/// Returns the current ticks elapsed as counted by the clock
+/// Returns the current value of the architectural physical count register.
 #[inline(always)]
 pub fn get_cntpct() -> u64 {
     let val: u64;
@@ -30,21 +30,28 @@ pub fn get_cntpct() -> u64 {
     val
 }
 
-/// Blocks for a certain amount of time in milliseconds
+/// Busy-waits for `ms` milliseconds using an architectural timer frequency.
 ///
-/// Accepts the amount of milliseconds as a `u64` and the clock frequency as `u64`
+/// Pass the value returned by [`get_cntfrq`] as `frq`. The wait consumes a CPU
+/// and should only be used during early boot or when no scheduler exists.
 ///
 /// # Examples
 ///
 /// ```
-/// let frq = power::get_cntfrq();
-/// power::delay_ms(1000, frq); // Blocks for 1 second
+/// let frq = timer::get_cntfrq();
+/// timer::delay_ms(1000, frq); // Blocks for 1 second
 /// ```
+///
+/// # Panics
+///
+/// Panics in debug builds if `frq * ms` overflows `u64`.
 pub fn delay_ms(ms: u64, frq: u64) {
-    let ticks_needed = (frq * ms)  / 1000;
+    let ticks_needed = (frq * ms) / 1000;
     let start_ticks = get_cntpct();
 
     while (get_cntpct() - start_ticks) < ticks_needed {
-        unsafe { asm!("yield", options(nomem, nostack, preserves_flags)); }
+        unsafe {
+            asm!("yield", options(nomem, nostack, preserves_flags));
+        }
     }
 }

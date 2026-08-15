@@ -1,12 +1,28 @@
 #![no_std]
 #![no_main]
 
+//! DynamixOS's freestanding AArch64 kernel image.
+//!
+//! Assembly transfers control to [`rust_main`] with a bootloader-supplied
+//! Flattened Device Tree pointer. The kernel installs exception vectors, uses
+//! the DTB to discover serial and platform services, then presents a small
+//! serial console and framebuffer demonstration. The current platform path
+//! uses QEMU `virt` services; the boot structure is not limited to that target.
+//!
+//! This binary is not a hosted Rust application. Build it for
+//! `aarch64-unknown-none` and load it through a compatible AArch64 boot flow.
+
+/// Polled console input and output over a HAL serial device.
 pub mod console;
+/// Minimal Flattened Device Tree parser used during boot discovery.
 pub mod dtb;
+/// AArch64 exception-vector setup and exception reporting.
 pub mod exceptions;
-pub mod fw_cfg;
+/// Embedded boot-logo rendering.
+pub mod logo;
+/// Platform power-control primitives.
 pub mod power;
-pub mod ramfb;
+/// AArch64 architectural timer access and busy-wait delays.
 pub mod timer;
 
 use core::arch::global_asm;
@@ -14,10 +30,7 @@ use core::panic::PanicInfo;
 
 use crate::console::Console;
 use crate::dtb::Dtb;
-use crate::fw_cfg::FwCfg;
-use crate::ramfb::RamFb;
-
-use hal::{aarch64::pl011::Pl011Uart, probe_serial, Serial};
+use hal::{Framebuffer, FwCfg, RamFb, Serial, aarch64::pl011::Pl011Uart, probe_serial};
 
 global_asm!(include_str!("boot.s"));
 
@@ -25,10 +38,10 @@ const WIDTH: usize = 1024;
 const HEIGHT: usize = 600;
 
 #[repr(C, align(4))]
-struct Framebuffer([u32; WIDTH * HEIGHT]);
-unsafe impl Sync for Framebuffer {}
+struct FramebufferMemory([u32; WIDTH * HEIGHT]);
+unsafe impl Sync for FramebufferMemory {}
 
-static FRAMEBUFFER: Framebuffer = Framebuffer([0; WIDTH * HEIGHT]);
+static FRAMEBUFFER: FramebufferMemory = FramebufferMemory([0; WIDTH * HEIGHT]);
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -67,6 +80,17 @@ fn panic(info: &PanicInfo) -> ! {
 }
 
 #[unsafe(no_mangle)]
+/// Rust entry point called by the AArch64 assembly bootstrap.
+///
+/// `dtb_ptr` is the physical/identity-mapped address passed by the bootloader
+/// in `x0`. On success this function does not return; it enters the console
+/// loop and can request shutdown through the active platform path.
+///
+/// # Panics
+///
+/// Panics when the boot DTB is invalid, no supported serial device is found,
+/// the current platform's `fw_cfg` service is absent, or the RAM framebuffer
+/// cannot be configured.
 pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
     // Initialize Exception Vector table
     exceptions::init();
@@ -92,16 +116,20 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
         .expect("fw_cfg Not Found");
     let (fw_cfg_base, _) = fw_cfg_node.reg().expect("Failed to read fw_cfg reg");
     console.writeln("[+] Found fw_cfg");
-    let fw_cfg = FwCfg::new(fw_cfg_base as usize);
+    // SAFETY: the DTB provides QEMU's identity-mapped fw_cfg MMIO base.
+    let fw_cfg = unsafe { FwCfg::new(fw_cfg_base as usize) };
 
     // Set up Framebuffer
     console.writeln("[+] Setting up Framebuffer");
-    let fb_ptr = FRAMEBUFFER.0.as_ptr() as *mut u32;
-    let display = RamFb::new(&fw_cfg, fb_ptr, WIDTH, HEIGHT).expect("Failed to initialize RamFb");
+    // SAFETY: this static buffer is exclusively used as the display framebuffer.
+    let framebuffer =
+        unsafe { Framebuffer::new(FRAMEBUFFER.0.as_ptr() as *mut u32, WIDTH * HEIGHT) };
+    let display =
+        RamFb::configure(&fw_cfg, framebuffer, WIDTH, HEIGHT).expect("Failed to initialize RamFb");
 
-    display.fill_screen(0x00_00_00_00);
+    display.fill(0x00_00_00_00);
 
-    display.draw_logo();
+    logo::draw_centered(&display, WIDTH, HEIGHT);
 
     //Get frq
     let frq = timer::get_cntfrq();
@@ -123,33 +151,33 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
                 power::shut();
             }
             b"logo" => {
-                display.fill_screen(0x00_00_00_00);
+                display.fill(0x00_00_00_00);
 
-                display.draw_logo();
+                logo::draw_centered(&display, WIDTH, HEIGHT);
                 console.writeln("Displaying Dynamix Boot Logo");
             }
             b"red" => {
-                display.fill_screen(0x00_FF_00_00);
+                display.fill(0x00_FF_00_00);
                 console.writeln("Screen set to Red");
             }
             b"green" => {
-                display.fill_screen(0x00_00_FF_00);
+                display.fill(0x00_00_FF_00);
                 console.writeln("Screen set to Green");
             }
             b"blue" => {
-                display.fill_screen(0x00_00_00_FF);
+                display.fill(0x00_00_00_FF);
                 console.writeln("Screen set to Blue");
             }
             b"white" => {
-                display.fill_screen(0x00_FF_FF_FF);
+                display.fill(0x00_FF_FF_FF);
                 console.writeln("Screen set to White");
             }
             b"clear" | b"black" => {
-                display.fill_screen(0x00_00_00_00);
+                display.fill(0x00_00_00_00);
                 console.writeln("Screen cleared");
             }
             b"yellow" => {
-                display.fill_screen(0x00_FF_FF_00);
+                display.fill(0x00_FF_FF_00);
                 console.writeln("Screen set to Yellow");
             }
             b"d-shut" => {
