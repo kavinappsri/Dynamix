@@ -20,16 +20,16 @@
 //! # Ok::<(), hal::ProbeError>(())
 //! ```
 
-#[cfg(target_arch = "aarch64")]
-/// AArch64-specific device drivers.
-pub mod aarch64;
+
+/// Architecture independent device drivers.
+pub mod common;
 /// Driver discovery based on bootloader device-tree data.
 pub mod device_tree;
 /// Generic framebuffer interface and driver discovery.
 pub mod framebuffer;
 /// Volatile access to identity-mapped MMIO register blocks.
 pub mod mmio;
-#[cfg(any(feature = "fw-cfg", feature = "ramfb"))]
+#[cfg(any(feature = "driver-fw-cfg", feature = "driver-ramfb"))]
 /// Drivers for virtual devices exposed by QEMU `virt`.
 pub mod qemu;
 /// Common polling serial-device interface.

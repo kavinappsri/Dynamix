@@ -8,14 +8,14 @@ test = false
 bench = false
 
 [features]
-default = ["qemu-virt"]
+default = ["board-qemu-virt"]
 
-qemu-virt = ["pl011", "fw-cfg", "ramfb"]
-rk3126 = []
+board-qemu-virt = ["driver-pl011", "driver-fw-cfg", "driver-ramfb"]
+board-rk3126 = []
 
-pl011 = []
-fw-cfg = []
-ramfb = ["fw-cfg"]
+driver-pl011 = []
+driver-fw-cfg = []
+driver-ramfb = ["driver-fw-cfg"]
 
 
 [dependencies]
