@@ -1,11 +1,20 @@
-//! QEMU RAM framebuffer configuration and pixel access.
+//! QEMU RAM framebuffer driver.
 
-use core::mem::size_of;
+use core::{cell::UnsafeCell, mem::size_of};
 
-use super::FwCfg;
+use crate::{
+    Framebuffer, FramebufferError,
+    framebuffer::FramebufferError::{DestinationOutOfBounds, DimensionsOverflow, SourceTooSmall},
+    qemu::fw_cfg::FwCfg,
+    register_framebuffer_driver,
+    sync::StaticCell,
+};
 
 const RAMFB_FILE: &str = "etc/ramfb";
 const XRGB8888: u32 = 0x3432_5258;
+const WIDTH: usize = 1024;
+const HEIGHT: usize = 600;
+const PIXEL_COUNT: usize = WIDTH * HEIGHT;
 
 // This is the byte-level payload defined by QEMU's `etc/ramfb` fw_cfg file.
 // It has no trailing padding: QEMU expects exactly 28 bytes.
@@ -21,180 +30,104 @@ struct RamFbConfig {
 
 const _: () = assert!(size_of::<RamFbConfig>() == 28);
 
-/// A mutable XRGB8888 framebuffer supplied by the kernel.
-pub struct Framebuffer {
+#[repr(align(16))]
+struct DisplayMemory(UnsafeCell<[u32; PIXEL_COUNT]>);
+
+// RAMFB is the only writer to this memory after initialization. Early boot is
+// single-core; future multi core display support must add external locking.
+unsafe impl Sync for DisplayMemory {}
+
+static DISPLAY_MEMORY: DisplayMemory = DisplayMemory(UnsafeCell::new([0; PIXEL_COUNT]));
+
+/// QEMU RAM framebuffer implementation hidden behind [`Framebuffer`].
+struct RamFb {
     pixels: *mut u32,
-    pixel_count: usize,
 }
 
-/// Errors returned while configuring or drawing to a RAM framebuffer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RamFbError {
-    /// The supplied framebuffer does not contain `width * height` pixels.
-    FramebufferTooSmall,
-    /// A dimension calculation overflowed `usize`.
-    DimensionsOverflow,
-    /// A dimension or stride cannot be represented by QEMU's `u32` protocol.
-    DimensionsTooLarge,
-    /// QEMU did not expose the `etc/ramfb` configuration file.
-    DeviceNotFound,
-    /// The source slice is shorter than the declared source rectangle.
-    SourceTooSmall,
-    /// The requested destination rectangle lies outside the visible framebuffer.
-    DestinationOutOfBounds,
-    /// The underlying `fw_cfg` operation failed.
-    FwCfg(crate::FwCfgError),
-}
+// Pixel writes use volatile stores through a shared framebuffer reference. The
+// driver is selected once during single-core early boot.
+unsafe impl Sync for RamFb {}
 
-impl From<crate::FwCfgError> for RamFbError {
-    fn from(error: crate::FwCfgError) -> Self {
-        Self::FwCfg(error)
-    }
-}
+impl RamFb {
+    fn configure(fw_cfg_base: usize) -> Result<Self, FramebufferError> {
+        // SAFETY: this address came from the validated, identity-mapped DTB.
+        let fw_cfg = unsafe { FwCfg::new(fw_cfg_base) };
+        let selector = fw_cfg
+            .find_file(RAMFB_FILE)
+            .map_err(|_| FramebufferError::InitializationFailed)?
+            .ok_or(FramebufferError::InitializationFailed)?;
+        let pixels = DISPLAY_MEMORY.0.get().cast::<u32>();
+        let config = RamFbConfig {
+            address: (pixels as usize as u64).to_be(),
+            fourcc: XRGB8888.to_be(),
+            flags: 0,
+            width: (WIDTH as u32).to_be(),
+            height: (HEIGHT as u32).to_be(),
+            stride: ((WIDTH * size_of::<u32>()) as u32).to_be(),
+        };
+        fw_cfg
+            .write_object(selector, &config)
+            .map_err(|_| FramebufferError::InitializationFailed)?;
 
-impl Framebuffer {
-    /// Creates a framebuffer view over `pixel_count` writable XRGB8888 pixels.
-    ///
-    /// # Safety
-    /// The range must be valid, uniquely writable framebuffer memory for the
-    /// lifetime of the returned value.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let framebuffer = unsafe { Framebuffer::new(pixels.as_mut_ptr(), pixels.len()) };
-    /// ```
-    pub const unsafe fn new(pixels: *mut u32, pixel_count: usize) -> Self {
-        Self {
-            pixels,
-            pixel_count,
-        }
+        Ok(Self { pixels })
     }
 
     fn write(&self, index: usize, color: u32) {
-        // SAFETY: `RamFb` validates all indices against this buffer's capacity.
+        // SAFETY: all callers calculate indices inside the fixed display.
         unsafe { self.pixels.add(index).write_volatile(color) }
     }
 }
 
-/// A configured QEMU RAM framebuffer.
-pub struct RamFb {
-    framebuffer: Framebuffer,
-    width: usize,
-    height: usize,
-}
-
-impl RamFb {
-    /// Configures QEMU's RAM framebuffer to scan out the supplied pixel buffer.
-    ///
-    /// Pixels use the XRGB8888 layout and are scanned out with no additional
-    /// copies after configuration.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when dimensions overflow, the buffer is too small, QEMU
-    /// does not provide `etc/ramfb`, or the underlying `fw_cfg` transfer fails.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let display = RamFb::configure(&fw_cfg, framebuffer, 1024, 600)?;
-    /// display.fill(0x00_20_20_20);
-    /// # Ok::<(), hal::RamFbError>(())
-    /// ```
-    pub fn configure(
-        fw_cfg: &FwCfg,
-        framebuffer: Framebuffer,
-        width: usize,
-        height: usize,
-    ) -> Result<Self, RamFbError> {
-        let pixel_count = width
-            .checked_mul(height)
-            .ok_or(RamFbError::DimensionsOverflow)?;
-        if framebuffer.pixel_count < pixel_count {
-            return Err(RamFbError::FramebufferTooSmall);
-        }
-
-        let selector = fw_cfg
-            .find_file(RAMFB_FILE)?
-            .ok_or(RamFbError::DeviceNotFound)?;
-        let stride = width
-            .checked_mul(size_of::<u32>())
-            .ok_or(RamFbError::DimensionsOverflow)?;
-
-        let width = u32::try_from(width).map_err(|_| RamFbError::DimensionsTooLarge)?;
-        let height = u32::try_from(height).map_err(|_| RamFbError::DimensionsTooLarge)?;
-        let stride = u32::try_from(stride).map_err(|_| RamFbError::DimensionsTooLarge)?;
-        let config = RamFbConfig {
-            address: (framebuffer.pixels as usize as u64).to_be(),
-            fourcc: XRGB8888.to_be(),
-            flags: 0,
-            width: width.to_be(),
-            height: height.to_be(),
-            stride: stride.to_be(),
-        };
-        fw_cfg.write_object(selector, &config)?;
-
-        Ok(Self {
-            framebuffer,
-            width: width as usize,
-            height: height as usize,
-        })
+impl Framebuffer for RamFb {
+    fn dimensions(&self) -> (usize, usize) {
+        (WIDTH, HEIGHT)
     }
 
-    /// Fills every visible pixel with `color` in XRGB8888 format.
-    pub fn fill(&self, color: u32) {
-        for index in 0..self.width * self.height {
-            self.framebuffer.write(index, color);
+    fn fill(&self, color: u32) {
+        for index in 0..PIXEL_COUNT {
+            self.write(index, color);
         }
     }
 
-    /// Copies XRGB8888 pixels to a rectangle in the framebuffer.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RamFbError::SourceTooSmall`] if `source` does not cover its
-    /// declared dimensions, [`RamFbError::DestinationOutOfBounds`] if the
-    /// rectangle does not fit, or [`RamFbError::DimensionsOverflow`] if the
-    /// source pixel count overflows.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// display.blit_xrgb8888(0, 0, &logo_pixels, logo_width, logo_height)?;
-    /// # Ok::<(), hal::RamFbError>(())
-    /// ```
-    pub fn blit_xrgb8888(
+    fn blit_xrgb8888(
         &self,
         x: usize,
         y: usize,
         source: &[u32],
         source_width: usize,
         source_height: usize,
-    ) -> Result<(), RamFbError> {
+    ) -> Result<(), FramebufferError> {
         let source_pixels = source_width
             .checked_mul(source_height)
-            .ok_or(RamFbError::DimensionsOverflow)?;
+            .ok_or(DimensionsOverflow)?;
         if source.len() < source_pixels {
-            return Err(RamFbError::SourceTooSmall);
+            return Err(SourceTooSmall);
         }
         if x.checked_add(source_width)
-            .is_none_or(|right| right > self.width)
+            .is_none_or(|right| right > WIDTH)
             || y.checked_add(source_height)
-                .is_none_or(|bottom| bottom > self.height)
+                .is_none_or(|bottom| bottom > HEIGHT)
         {
-            return Err(RamFbError::DestinationOutOfBounds);
+            return Err(DestinationOutOfBounds);
         }
 
         for row in 0..source_height {
             for column in 0..source_width {
-                self.framebuffer.write(
-                    (y + row) * self.width + x + column,
+                self.write(
+                    (y + row) * WIDTH + x + column,
                     source[row * source_width + column],
                 );
             }
         }
-
         Ok(())
     }
 }
+
+fn init_ramfb(fw_cfg_base: usize) -> Result<&'static dyn Framebuffer, FramebufferError> {
+    static INSTANCE: StaticCell<RamFb> = StaticCell::uninit();
+    let ramfb = RamFb::configure(fw_cfg_base)?;
+    let ramfb: &'static RamFb = INSTANCE.get_or_init(|| ramfb);
+    Ok(ramfb)
+}
+
+register_framebuffer_driver!(QEMU_RAMFB, "qemu,fw-cfg-mmio", init_ramfb);

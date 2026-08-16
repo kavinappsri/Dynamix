@@ -2,10 +2,9 @@
 
 /// A polling serial device.
 ///
-/// This intentionally exposes only the operations the kernel currently needs.
 /// Interrupt and configuration support belong in the driver once the kernel has
 /// the infrastructure to use them.
-pub trait Serial {
+pub trait Serial: Sync {
     /// Blocks until `byte` has been transmitted.
     fn write_byte(&self, byte: u8);
 

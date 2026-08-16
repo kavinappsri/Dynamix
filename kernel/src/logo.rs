@@ -1,7 +1,7 @@
 //! Kernel boot-logo presentation policy.
 
 use core::mem::size_of;
-use hal::RamFb;
+use hal::{Framebuffer, FramebufferError};
 
 const WIDTH: usize = 729;
 const HEIGHT: usize = 228;
@@ -11,18 +11,18 @@ struct AlignedPixels([u8; WIDTH * HEIGHT * size_of::<u32>()]);
 
 static PIXELS: AlignedPixels = AlignedPixels(*include_bytes!("logo.bin"));
 
-/// Draws the embedded logo at the center of the supplied display dimensions.
-///
-/// # Panics
-///
-/// Panics if the declared display dimensions are smaller than the embedded
-/// logo, or if the framebuffer rejects the destination rectangle.
-pub fn draw_centered(framebuffer: &RamFb, screen_width: usize, screen_height: usize) {
-    let x = (screen_width - WIDTH) / 2;
-    let y = (screen_height - HEIGHT) / 2;
-    framebuffer
-        .blit_xrgb8888(x, y, pixels(), WIDTH, HEIGHT)
-        .expect("Embedded logo does not fit the framebuffer");
+/// Draws the embedded logo at the center of any HAL framebuffer.
+pub fn draw_centered(framebuffer: &dyn Framebuffer) -> Result<(), FramebufferError> {
+    let (screen_width, screen_height) = framebuffer.dimensions();
+    let x = screen_width
+        .checked_sub(WIDTH)
+        .ok_or(FramebufferError::DestinationOutOfBounds)?
+        / 2;
+    let y = screen_height
+        .checked_sub(HEIGHT)
+        .ok_or(FramebufferError::DestinationOutOfBounds)?
+        / 2;
+    framebuffer.blit_xrgb8888(x, y, pixels(), WIDTH, HEIGHT)
 }
 
 fn pixels() -> &'static [u32] {

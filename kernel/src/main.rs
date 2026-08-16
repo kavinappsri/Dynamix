@@ -30,24 +30,14 @@ use core::panic::PanicInfo;
 
 use crate::console::Console;
 use crate::dtb::Dtb;
-use hal::{Framebuffer, FwCfg, RamFb, Serial, aarch64::pl011::Pl011Uart, probe_serial};
+use hal::{active_serial, probe_framebuffer, probe_serial};
 
 global_asm!(include_str!("boot.s"));
 
-const WIDTH: usize = 1024;
-const HEIGHT: usize = 600;
-
-#[repr(C, align(4))]
-struct FramebufferMemory([u32; WIDTH * HEIGHT]);
-unsafe impl Sync for FramebufferMemory {}
-
-static FRAMEBUFFER: FramebufferMemory = FramebufferMemory([0; WIDTH * HEIGHT]);
-
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    // SAFETY: QEMU virt maps the early PL011 UART at this fixed address.
-    let uart = unsafe { Pl011Uart::new(0x09000000) };
-    uart.write_str("PANIC: Dynamix stage fright\n");
+    let Some(uart) = active_serial() else { loop {} };
+    uart.write_str("==DYNAMIX stage fright ==\n");
     uart.write_str("LOCATION: ");
 
     if let Some(loc) = info.location() {
@@ -89,8 +79,7 @@ fn panic(info: &PanicInfo) -> ! {
 /// # Panics
 ///
 /// Panics when the boot DTB is invalid, no supported serial device is found,
-/// the current platform's `fw_cfg` service is absent, or the RAM framebuffer
-/// cannot be configured.
+/// a compiled framebuffer driver cannot be initialized.
 pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
     // Initialize Exception Vector table
     exceptions::init();
@@ -109,27 +98,13 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
     console.writeln("Dynamix v0.1.0\n");
     console.writeln("[+] DTB, UART Found");
 
-    // Set up FW_CFG
-    console.writeln("[+] Attempting to find fw_cfg");
-    let fw_cfg_node = dtb
-        .find_compatible("qemu,fw-cfg-mmio")
-        .expect("fw_cfg Not Found");
-    let (fw_cfg_base, _) = fw_cfg_node.reg().expect("Failed to read fw_cfg reg");
-    console.writeln("[+] Found fw_cfg");
-    // SAFETY: the DTB provides QEMU's identity-mapped fw_cfg MMIO base.
-    let fw_cfg = unsafe { FwCfg::new(fw_cfg_base as usize) };
-
-    // Set up Framebuffer
-    console.writeln("[+] Setting up Framebuffer");
-    // SAFETY: this static buffer is exclusively used as the display framebuffer.
-    let framebuffer =
-        unsafe { Framebuffer::new(FRAMEBUFFER.0.as_ptr() as *mut u32, WIDTH * HEIGHT) };
-    let display =
-        RamFb::configure(&fw_cfg, framebuffer, WIDTH, HEIGHT).expect("Failed to initialize RamFb");
+    // Set up a display through a compiled HAL framebuffer driver.
+    console.writeln("[+] Discovering framebuffer");
+    let display = probe_framebuffer(&dtb).expect("No compatible framebuffer driver in DTB");
 
     display.fill(0x00_00_00_00);
 
-    logo::draw_centered(&display, WIDTH, HEIGHT);
+    logo::draw_centered(display).expect("Failed to draw boot logo");
 
     //Get frq
     let frq = timer::get_cntfrq();
@@ -153,7 +128,7 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
             b"logo" => {
                 display.fill(0x00_00_00_00);
 
-                logo::draw_centered(&display, WIDTH, HEIGHT);
+                logo::draw_centered(display).expect("Failed to draw boot logo");
                 console.writeln("Displaying Dynamix Boot Logo");
             }
             b"red" => {

@@ -1,6 +1,8 @@
 //! Device-tree based discovery of the small set of drivers supported at boot.
 
-use crate::Serial;
+use crate::{Serial, sync::StaticCell};
+
+static ACTIVE_SERIAL: StaticCell<&'static dyn Serial> = StaticCell::uninit();
 
 /// The portion of a device tree needed by HAL driver discovery.
 ///
@@ -94,9 +96,18 @@ fn serial_drivers() -> &'static [SerialDriver] {
 pub fn probe_serial(tree: &impl DeviceTree) -> Result<&'static dyn Serial, ProbeError> {
     for driver in serial_drivers() {
         if let Some(base) = tree.compatible_address(driver.compatible) {
-            return Ok((driver.init)(base));
+            return Ok(*ACTIVE_SERIAL.get_or_init(|| (driver.init)(base)));
         }
     }
 
     Err(ProbeError::NoCompatibleSerialDriver)
+}
+
+/// Returns the serial device selected by [`probe_serial`], if boot discovery
+/// completed successfully.
+///
+/// Exception and panic reporting can use this without coupling the kernel to a
+/// particular UART implementation.
+pub fn active_serial() -> Option<&'static dyn Serial> {
+    ACTIVE_SERIAL.get().copied()
 }

@@ -25,17 +25,17 @@
 pub mod aarch64;
 /// Driver discovery based on bootloader device-tree data.
 pub mod device_tree;
+/// Generic framebuffer interface and driver discovery.
+pub mod framebuffer;
 /// Volatile access to identity-mapped MMIO register blocks.
 pub mod mmio;
-#[cfg(feature = "qemu-virt")]
+#[cfg(any(feature = "fw-cfg", feature = "ramfb"))]
 /// Drivers for virtual devices exposed by QEMU `virt`.
 pub mod qemu;
 /// Common polling serial-device interface.
 pub mod serial;
-#[cfg(feature = "pl011")]
 mod sync;
 
-pub use device_tree::{DeviceTree, ProbeError, probe_serial};
-#[cfg(feature = "qemu-virt")]
-pub use qemu::{Framebuffer, FwCfg, FwCfgError, RamFb, RamFbError};
+pub use device_tree::{DeviceTree, ProbeError, active_serial, probe_serial};
+pub use framebuffer::{Framebuffer, FramebufferError, probe_framebuffer};
 pub use serial::Serial;

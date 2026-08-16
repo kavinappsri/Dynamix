@@ -46,4 +46,13 @@ impl<T> StaticCell<T> {
         // above synchronize competing initializers before this reference forms.
         unsafe { (&*self.value.get()).assume_init_ref() }
     }
+
+    pub fn get(&'static self) -> Option<&'static T> {
+        if self.state.load(Ordering::Acquire) == 2 {
+            // SAFETY: state 2 is published only after the value is initialized.
+            Some(unsafe { (&*self.value.get()).assume_init_ref() })
+        } else {
+            None
+        }
+    }
 }

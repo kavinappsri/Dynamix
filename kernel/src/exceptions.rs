@@ -1,7 +1,7 @@
 //! AArch64 EL1 exception-vector initialization and diagnostic reporting.
 
 use core::arch::global_asm;
-use hal::{Serial, aarch64::pl011::Pl011Uart};
+use hal::{Serial, active_serial};
 
 global_asm!(include_str!("vectors.s"));
 
@@ -56,18 +56,18 @@ const KINDS: [&str; 4] = ["Synchronous", "IRQ", "FIQ", "SError"];
 #[unsafe(no_mangle)]
 /// Handles an exception forwarded by the assembly vector table.
 ///
-/// The function reports the captured state through QEMU's early PL011 UART and
-/// then halts permanently. `source` and `kind` are vector-table indices passed
-/// by `vectors.s`; unknown values are rendered as `Unknown`.
+/// The function reports the captured state through the serial device selected
+/// by HAL, then halts permanently. `source` and `kind` are vector-table
+/// indices passed by `vectors.s`; unknown values are rendered as `Unknown`.
 ///
 /// # Panics
 ///
 /// This handler itself does not panic, but it never returns.
 pub extern "C" fn rust_exception_handler(ctx: &ExceptionContext, source: usize, kind: usize) {
-    // SAFETY: QEMU virt maps the early PL011 UART at this fixed address.
-    let uart = unsafe { Pl011Uart::new(0x09000000) };
+    let Some(uart) = active_serial() else { loop {} };
 
-    uart.write_str("\n=== EXCEPTION TRIGGERED ===\n");
+    uart.write_str("\n=== DYNAMIX STAGE FRIGHT ===\n");
+    uart.write_str("Triggered by the exception vector table\n");
     uart.write_str("Source: ");
     uart.write_str(SOURCES.get(source).unwrap_or(&"Unknown"));
     uart.write_str("\nType:   ");
@@ -81,17 +81,17 @@ pub extern "C" fn rust_exception_handler(ctx: &ExceptionContext, source: usize, 
     uart.write_str("\n\n");
 
     // Hex dump registers
-    print_hex(&uart, "ELR_EL1 (PC)", ctx.elr);
-    print_hex(&uart, "FAR_EL1 (Addr)", ctx.far);
-    print_hex(&uart, "ESR_EL1 (Syndrome)", ctx.esr);
-    print_hex(&uart, "SPSR_EL1", ctx.spsr);
+    print_hex(uart, "ELR_EL1 (PC)", ctx.elr);
+    print_hex(uart, "FAR_EL1 (Addr)", ctx.far);
+    print_hex(uart, "ESR_EL1 (Syndrome)", ctx.esr);
+    print_hex(uart, "SPSR_EL1", ctx.spsr);
 
     uart.write_str("\nSystem halted.\n");
 
     loop {}
 }
 
-fn print_hex(uart: &Pl011Uart, label: &str, val: u64) {
+fn print_hex(uart: &dyn Serial, label: &str, val: u64) {
     uart.write_str(label);
     uart.write_str(": 0x");
 
