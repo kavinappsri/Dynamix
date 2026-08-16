@@ -35,6 +35,9 @@ use hal::{active_serial, probe_framebuffer, probe_serial};
 #[cfg(target_arch = "aarch64")]
 global_asm!(include_str!("../aarch64/aarch64_boot.s"));
 
+#[cfg(target_arch = "arm")]
+global_asm!(include_str!("../armv7/armv7_boot.s"));
+
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     let Some(uart) = active_serial() else { loop {} };
