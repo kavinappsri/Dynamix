@@ -9,15 +9,5 @@ bench = false
 name = "dynamix_kernel"
 path = "src/main.rs"
 
-[features]
-default = ["qemu-virt"]
-
-qemu-virt = ["pl011", "fw-cfg", "ramfb"]
-rk3126 = []
-
-pl011 = []
-fw-cfg = []
-ramfb = []
-
 [dependencies]
 hal = { path = "../hal", default-features = false }

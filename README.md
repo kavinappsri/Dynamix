@@ -25,7 +25,7 @@ boot.s -> rust_main(dtb pointer)
 the interactive serial console. `hal` is a `no_std` library that contains the
 MMIO wrapper, polling serial trait, linker-section driver registry, ARM PL011
 driver, and platform-specific device drivers. The linker script in
-[`kernel/aarch64_linker.ld`](kernel/aarch64_linker.ld) places the image at `0x4020_0000` and
+[`kernel/aarch64/aarch64_linker.ld`](kernel/aarch64/aarch64_linker.ld) places the image at `0x4020_0000` and
 keeps registered serial drivers in a dedicated section.
 
 ## Workspace crates
