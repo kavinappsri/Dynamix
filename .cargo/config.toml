@@ -4,7 +4,7 @@ target = "aarch64-unknown-none"
 [target.aarch64-unknown-none]
 rustflags = [
     "-C",
-    "link-arg=-Tkernel/linker.ld",
+    "link-arg=-Tkernel/aarch64_linker.ld",
 ]
 runner = [
     "sh",

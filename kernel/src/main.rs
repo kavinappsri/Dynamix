@@ -32,7 +32,7 @@ use crate::console::Console;
 use crate::dtb::Dtb;
 use hal::{active_serial, probe_framebuffer, probe_serial};
 
-global_asm!(include_str!("boot.s"));
+global_asm!(include_str!("aarch64_boot.s"));
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
