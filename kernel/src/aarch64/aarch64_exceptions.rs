@@ -3,7 +3,7 @@
 use core::arch::global_asm;
 use hal::{Serial, active_serial};
 
-global_asm!(include_str!("vectors.s"));
+global_asm!(include_str!("../../asm/aarch64/aarch64_vectors.s"));
 
 unsafe extern "C" {
     static vector_table_el1: u8;

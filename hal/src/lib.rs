@@ -34,8 +34,25 @@ pub mod mmio;
 pub mod qemu;
 /// Common polling serial-device interface.
 pub mod serial;
+/// Aarch64 dependent features
+
 mod sync;
 
 pub use device_tree::{DeviceTree, ProbeError, active_serial, probe_serial};
 pub use framebuffer::{Framebuffer, FramebufferError, probe_framebuffer};
 pub use serial::Serial;
+
+use core::arch::global_asm;
+
+
+// Boot assembly compilation
+
+#[cfg(target_arch = "aarch64")]
+global_asm!(include_str!("asm/aarch64/aarch64_boot.s"));
+
+#[cfg(target_arch = "arm")]
+global_asm!(include_str!("asm/armv7/armv7_boot.s"));
+
+#[cfg(not(any(target_arch = "aarch64", target_arch = "arm")))]
+compile_error!("This architecture is currently not supported");
+

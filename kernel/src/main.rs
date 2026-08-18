@@ -16,8 +16,6 @@
 pub mod console;
 /// Minimal Flattened Device Tree parser used during boot discovery.
 pub mod dtb;
-/// AArch64 exception-vector setup and exception reporting.
-pub mod exceptions;
 /// Embedded boot-logo rendering.
 pub mod logo;
 /// Platform power-control primitives.
@@ -25,18 +23,21 @@ pub mod power;
 /// AArch64 architectural timer access and busy-wait delays.
 pub mod timer;
 
-use core::arch::global_asm;
-use core::panic::PanicInfo;
+#[cfg(target_arch = "aarch64")]
+pub mod aarch64;
+
+#[cfg(target_arch = "arm")]
+pub mod armv7;
 
 use crate::console::Console;
 use crate::dtb::Dtb;
+use core::panic::PanicInfo;
 use hal::{active_serial, probe_framebuffer, probe_serial};
 
 #[cfg(target_arch = "aarch64")]
-global_asm!(include_str!("../aarch64/aarch64_boot.s"));
+use aarch64::aarch64_exceptions;
 
-#[cfg(target_arch = "arm")]
-global_asm!(include_str!("../armv7/armv7_boot.s"));
+
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -86,7 +87,7 @@ fn panic(info: &PanicInfo) -> ! {
 /// a compiled framebuffer driver cannot be initialized.
 pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
     // Initialize Exception Vector table
-    exceptions::init();
+    aarch64_exceptions::init();
 
     // Parse DTB
     let dtb = match unsafe { Dtb::from_ptr(dtb_ptr) } {

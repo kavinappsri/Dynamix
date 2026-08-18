@@ -4,7 +4,7 @@ target = "aarch64-unknown-none"
 [target.aarch64-unknown-none]
 rustflags = [
     "-C",
-    "link-arg=-Tkernel/aarch64/aarch64_linker.ld",
+    "link-arg=-Tkernel/asm/aarch64/aarch64_linker.ld",
 ]
 runner = [
     "sh",
@@ -15,7 +15,7 @@ runner = [
 [target.armv7a-none-eabi]
 rustflags = [
     "-C",
-    "link-args=-Tkernel/armv7/armv7_linker.ld",
+    "link-args=-Tkernel/asm/armv7/armv7_linker.ld",
 ]
 runner = [
     "sh",
