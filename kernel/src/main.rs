@@ -1,16 +1,13 @@
 #![no_std]
 #![no_main]
 
-//! DynamixOS's freestanding AArch64 kernel image.
+//! Dynamix's kernel image.
 //!
-//! Assembly transfers control to [`rust_main`] with a bootloader-supplied
-//! Flattened Device Tree pointer. The kernel installs exception vectors, uses
-//! the DTB to discover serial and platform services, then presents a small
-//! serial console and framebuffer demonstration. The current platform path
-//! uses QEMU `virt` services; the boot structure is not limited to that target.
-//!
-//! This binary is not a hosted Rust application. Build it for
-//! `aarch64-unknown-none` and load it through a compatible AArch64 boot flow.
+//! Assembly transfers control to `rust_main` with the pointer to the
+//! FDT in the first register. Currently the kernel shows its boot logo
+//! and shuts down after 5s (d-shut), this can be removied, and doing that
+//! expose a shell via the debug UART
+
 
 /// Polled console input and output over a HAL serial device.
 pub mod console;
@@ -18,26 +15,11 @@ pub mod console;
 pub mod dtb;
 /// Embedded boot-logo rendering.
 pub mod logo;
-/// Platform power-control primitives.
-pub mod power;
-/// AArch64 architectural timer access and busy-wait delays.
-pub mod timer;
-
-#[cfg(target_arch = "aarch64")]
-pub mod aarch64;
-
-#[cfg(target_arch = "arm")]
-pub mod armv7;
 
 use crate::console::Console;
 use crate::dtb::Dtb;
 use core::panic::PanicInfo;
 use hal::{active_serial, probe_framebuffer, probe_serial};
-
-#[cfg(target_arch = "aarch64")]
-use aarch64::aarch64_exceptions;
-
-
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -87,7 +69,7 @@ fn panic(info: &PanicInfo) -> ! {
 /// a compiled framebuffer driver cannot be initialized.
 pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
     // Initialize Exception Vector table
-    aarch64_exceptions::init();
+    hal::exceptions::init();
 
     // Parse DTB
     let dtb = match unsafe { Dtb::from_ptr(dtb_ptr) } {
@@ -107,17 +89,36 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
     console.writeln("[+] Discovering framebuffer");
     let display = probe_framebuffer(&dtb).expect("No compatible framebuffer driver in DTB");
 
+
+    // Set up power
+    match dtb.find_compatible("arm,psci") {
+        None => {
+            console.writeln("[ ] PSCI Not Found");
+            panic!();
+        }
+        Some(psci) => {
+            console.writeln("[+] PSCI Found");
+
+            match psci.property("method") {
+                Some(method) => {
+                    hal::power::init(method.as_str().unwrap());
+                    console.writeln("[+] PSCI Method found and set");
+                }
+                None => {
+                    console.writeln("[ ] No PSCI Method Found:");
+                    panic!();
+                }
+            }
+        }
+    }
+
     display.fill(0x00_00_00_00);
 
     logo::draw_centered(display).expect("Failed to draw boot logo");
 
-    //Get frq
-    let frq = timer::get_cntfrq();
-
-    //Automatic d-shut - ONLY FOR DEV TESTING
-    timer::delay_ms(5000, frq);
-
-    power::shut();
+    //Automatic d-shut - ONLY FOR DEV TESTING - Remove to get to cmd line
+    hal::timer::delay_ms(5000);   // <-------
+    hal::power::system_off();         // <-------
 
     // Main Command Loop
     loop {
@@ -128,7 +129,7 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
         match &command_buffer[..length] {
             b"shutdown" => {
                 console.writeln("Shutting down");
-                power::shut();
+                hal::power::system_off();
             }
             b"logo" => {
                 display.fill(0x00_00_00_00);
@@ -161,9 +162,9 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
                 console.writeln("Screen set to Yellow");
             }
             b"d-shut" => {
-                timer::delay_ms(5000, frq);
+                hal::timer::delay_ms(5000);
 
-                power::shut()
+                hal::power::system_off();
             }
             b"kavin" => {
                 console.writeln("Kavin is always better than gootam");

@@ -1,9 +1,9 @@
 //! AArch64 EL1 exception-vector initialization and diagnostic reporting.
 
 use core::arch::global_asm;
-use hal::{Serial, active_serial};
+use crate::{Serial, active_serial};
 
-global_asm!(include_str!("../../asm/aarch64/aarch64_vectors.s"));
+global_asm!(include_str!("../asm/aarch64/aarch64_vectors.s"));
 
 unsafe extern "C" {
     static vector_table_el1: u8;

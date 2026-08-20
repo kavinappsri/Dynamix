@@ -15,7 +15,7 @@
 //! ```ignore
 //! use hal::{probe_serial, DeviceTree};
 //!
-//! let uart = probe_serial(&tree)?;
+//! let uart = probe_serial(&tree)?;111.4285714286
 //! uart.write_str("early boot complete\n");
 //! # Ok::<(), hal::ProbeError>(())
 //! ```
@@ -35,8 +35,16 @@ pub mod qemu;
 /// Common polling serial-device interface.
 pub mod serial;
 /// Aarch64 dependent features
+#[cfg(target_arch = "aarch64")]
+pub mod aarch64;
+
+#[cfg(target_arch = "arm")]
+pub mod armv7;
 
 mod sync;
+pub mod exceptions;
+pub mod power;
+pub mod timer;
 
 pub use device_tree::{DeviceTree, ProbeError, active_serial, probe_serial};
 pub use framebuffer::{Framebuffer, FramebufferError, probe_framebuffer};

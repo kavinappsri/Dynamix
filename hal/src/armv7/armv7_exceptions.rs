@@ -1,9 +1,9 @@
 //! ARMv7-A exception vector initialization and diagnostic reporting.
 
 use core::arch::global_asm;
-use hal::{Serial, active_serial};
+use crate::{Serial, active_serial};
 
-global_asm!(include_str!("../../asm/armv7/armv7_vectors.s"), options(raw));
+global_asm!(include_str!("../asm/armv7/armv7_vectors.s"), options(raw));
 
 unsafe extern "C" {
     static vector_table: u8;

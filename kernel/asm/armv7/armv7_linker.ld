@@ -23,7 +23,7 @@ SECTIONS {
 
         __start_framebuffer_drivers = .;
         KEEP(*(.drivers.framebuffer))
-        __stop_serial_drivers = .;
+        __stop_framebuffer_drivers = .;
     }
 
     data :

@@ -49,10 +49,6 @@ vector_table:
     mov r0, sp
     mov r1, #\vector_id
     bl rust_exception_handler
-
-hang:
-    wfe
-    b hang
 .endmacro
 
 reset_handler:          EXCEPTION_ENTRY 0
