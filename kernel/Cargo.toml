@@ -10,4 +10,4 @@ name = "dynamix_kernel"
 path = "src/main.rs"
 
 [dependencies]
-hal = { path = "../hal", default-features = false }
+hal = { path = "../hal", default-features = false, features = ["board-qemu-virt"] }

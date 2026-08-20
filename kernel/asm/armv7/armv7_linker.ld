@@ -1,7 +1,8 @@
 ENTRY(_start)
 
 SECTIONS {
-    . = 40200000;
+    /* QEMU's ARM virt raw-kernel loader enters the image at 0x4001_0000. */
+    . = 0x40010000;
     _kernel_start = .;
 
     .text :
@@ -50,5 +51,5 @@ SECTIONS {
     }
 
     _kernel_end  = .;
-    _image_size = _kernel_start - _kernel_end;
+    _image_size = _kernel_end - _kernel_start;
 }
