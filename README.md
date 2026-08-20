@@ -1,115 +1,75 @@
-# DynamixOS
+# Dynamix
 
-DynamixOS is an experimental, freestanding Rust kernel and OS.
-QEMU's `virt` machine is the currently supported execution platform and is
-used for early bring-up. It demonstrates the path from a bootloader-supplied
-device tree to UART output, `fw_cfg` discovery, and a RAM-backed framebuffer.
-The code is deliberately small and structured so that platform and driver
-support can grow without redefining the kernel.
+__THIS PROJECT IS BY NO MEANS READY YET, ITS IS A WORK IN PROGRESS__
 
-## Architecture
+Dynamix is an OS, currently being made as a hobby project. It's coded in Rust. It currently supports QEMU, both aarch64
+and armv7. More platform are intended to be added as their integration and drivers become ready. At this stage the 
+project only shows its boot logo and has a shell which allows you to change the display and shut it down
 
-The workspace separates machine-independent driver interfaces from kernel
-policy:
+## Crates
 
-```text
-boot.s -> rust_main(dtb pointer)
-             |
-             +-> kernel::dtb       parses the bootloader's FDT
-             +-> hal::probe_serial discovers a registered UART driver
-             +-> hal::FwCfg/RamFb  configures QEMU display output
-             +-> kernel modules    console, logo, timer, power, exceptions
+This project currently has 2 crates - kernel, and hal
+
+Kernel is the main part of project, it is the part of the OS that performs the higher level logic
+
+Hal (Hardware Abstraction Layer) is a set of low level features that accommodate for differences in platform, assisting 
+in setting up the runtime environment for rust and setting up the exception vector table, among other things.
+
+## General Execution Flow
+
+Please look at `main.rs` for reference
+
+The boot assembly (automatically run by importing `hal`) writes the Linux Boot Header, turns on FP/NEON hardware, set 
+the stack pointer, clears the ram, sets the FDT pointer in register 0, and branches to `rust_main` (defined in `main.rs`).
+
+In `rust_main`, the exception vector table is set up. The FDT is found and parsed by the kernel, which then passes it to
+HAL functions named `probe_serial` and `probe_framebuffer` to find compatible drivers that were compiled with it. The kernel
+then sets up `hal::power` by passing in the `method` property of the `psci` node in the FDT to it.
+
+The kernel then draws its boot logo on the screen, and automatically shuts down after 5 seconds. if the code for the shutdown
+is removed, the kernel will run on a simple shell via the UART, which allows the user to set the display or shut the kernel
+down.
+
+## Building and Running
+
+### Prerequisites
+
+* Rust
+* Python
+* Poetry
+* QEMU (if you are running this on your computer)
+
+### Process
+
+1. Set up the Poetry venv by running the given command at the workspace root
+
+```bash
+poetry install
 ```
 
-`kernel` owns boot sequencing, device-tree parsing, exception reporting, and
-the interactive serial console. `hal` is a `no_std` library that contains the
-MMIO wrapper, polling serial trait, linker-section driver registry, ARM PL011
-driver, and platform-specific device drivers. The linker script in
-[`kernel/asm/aarch64/aarch64_linker.ld`](kernel/asm/aarch64/aarch64_linker.ld) places the image at `0x4020_0000` and
-keeps registered serial drivers in a dedicated section.
+2. Convert the boot logo to a .bin by running
 
-## Workspace crates
-
-| Crate | Purpose |
-| --- | --- |
-| `hal` | `no_std` hardware abstraction library. Feature `qemu-virt` (the current default platform configuration) enables QEMU framebuffer support; `pl011` enables PL011 registration. |
-| `kernel` | `no_std`, `no_main` AArch64 kernel binary named `dynamix_kernel`. It consumes `hal` and provides the boot entry point. |
-
-The Python utilities in [`Tools`](Tools) support image generation and inspection
-of boot-related artifacts; they are managed separately with Poetry.
-
-## Prerequisites
-
-- A recent Rust toolchain with the `aarch64-unknown-none` target.
-- For the currently supported QEMU `virt` setup: an AArch64 QEMU system
-  emulator (`qemu-system-aarch64`).
-- A boot flow for the selected platform that loads this image at the address
-  described by the linker script and supplies a valid Flattened Device Tree
-  pointer in `x0`.
-
-Install the Rust target if needed:
-
-```sh
-rustup target add aarch64-unknown-none
+```bash
+cd Tools
+python generate_image.py ../Assets/Dynamix.png ../kernel/src/logo.bin
 ```
 
-For the optional image tools, install Poetry and run `poetry install` at the
-repository root.
+3. Build for your targeted environment, passing in the flags of the drivers you want to compile with it, or the board you
+want to compile for (currently only the drivers for qemu-virt board are supported)
 
-## Build
-
-Build the whole Rust workspace for its target architecture:
-
-```sh
-cargo build --workspace --target aarch64-unknown-none
+```bash
+cargo build --target aarch64-unknown-none --feature board-qemu-virt
 ```
 
-Build just the kernel release image:
+4. To run this on your computer, simply run with cargo (this assumes you have the associated qemu board installed)
 
-```sh
-cargo build -p kernel --release --target aarch64-unknown-none
+
+```bash
+cargo run
 ```
 
-The resulting executable is
-`target/aarch64-unknown-none/release/dynamix_kernel`. Integrate that ELF with
-your selected platform's boot flow. For the current QEMU `virt` setup, this
-means a matching QEMU invocation; the repository does not yet provide a
-complete launch script or boot-image packager.
+if that does not work, invoke QEMU manually
 
-## Using the crates
-
-The kernel uses `hal` as a path dependency. The central integration point is
-the `DeviceTree` trait: the kernel's DTB parser implements it, allowing
-`hal::probe_serial` to select a serial driver registered by compatible string.
-
-```rust,ignore
-use hal::{probe_serial, DeviceTree};
-
-fn start_console(tree: &impl DeviceTree) {
-    let uart = probe_serial(tree).expect("a supported UART is required");
-    uart.write_str("DynamixOS is running\n");
-}
+```bash
+FILE="target/aarch64-unknown-none/release/dynamix_kernel" && rust-objcopy -O binary "$FILE" "$FILE.bin" && qemu-system-aarch64 -machine virt -cpu cortex-a72 -device ramfb -serial stdio -monitor none -d cpu,in_asm -kernel "$FILE.bin
 ```
-
-For QEMU graphics, create a `Framebuffer` over exclusively owned XRGB8888
-memory, configure it with `RamFb::configure`, then use `fill` or
-`blit_xrgb8888`. These APIs interact with MMIO/DMA and are intended for the
-freestanding kernel environment, not a hosted application.
-
-## Development notes
-
-- All hardware addresses must be mapped before constructing HAL devices.
-- The current QEMU `virt` configuration expects a PL011 UART and the
-  `qemu,fw-cfg-mmio` device to be described by the DTB. Other platforms need
-  the appropriate enabled drivers and boot integration.
-- Build profiles use `panic = "abort"`; exception and panic reporting write to
-  the early PL011 UART.
-- Generate API documentation with
-  `cargo doc --workspace --target aarch64-unknown-none --no-deps`.
-
-## Status
-
-This is an early bring-up kernel, not a general-purpose operating system. QEMU
-`virt` is currently the only supported runtime platform; the architecture is
-intended to accommodate additional platforms as their drivers and boot
-integration become ready.

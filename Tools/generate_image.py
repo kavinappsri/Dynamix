@@ -17,7 +17,6 @@ def main():
     width, height = img.size
     print(f"[+] Processing {width}x{height} raw image to binary...")
 
-    # Write raw little-endian bytes directly
     with open(output_path, "wb") as f:
         for y in range(height):
             for x in range(width):
