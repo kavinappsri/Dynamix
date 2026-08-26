@@ -9,7 +9,7 @@ rustflags = [
 runner = [
     "sh",
     "-c",
-    "rust-objcopy -O binary \"$0\" \"$0.bin\" && qemu-system-aarch64 -machine virt -cpu cortex-a72 -device ramfb -serial stdio -monitor none -kernel \"$0.bin\""
+    "rust-objcopy -O binary \"$0\" \"$0.bin\" && qemu-system-aarch64 -machine virt -cpu cortex-a72 -device ramfb -serial stdio -monitor none -d in_asm,int -D dynamix_asm.log -kernel \"$0.bin\""
 ]
 
 [target.armv7a-none-eabi]
