@@ -342,8 +342,9 @@ fn read_be_u32(slice: &[u8], offset: usize) -> u32 {
 }
 
 impl hal::DeviceTree for Dtb<'_> {
-    fn compatible_address(&self, compatible: &str) -> Option<usize> {
+    fn compatible_address(&self, compatible: &str) -> Option<(usize, usize)> {
         Dtb::find_compatible(self, compatible)
-            .and_then(|node| node.reg().map(|(base, _)| base as usize))
+            .and_then(|node| node.reg())
+            .map(|(base, size)| (base as usize, size as usize) )
     }
 }

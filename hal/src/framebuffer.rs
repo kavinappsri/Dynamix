@@ -91,7 +91,8 @@ pub fn probe_framebuffer(
     tree: &impl DeviceTree,
 ) -> Result<&'static dyn Framebuffer, FramebufferError> {
     for driver in framebuffer_drivers() {
-        if let Some(base) = tree.compatible_address(driver.compatible) {
+        if let Some((base, size)) = tree.compatible_address(driver.compatible) {
+            crate::mmu::map_device(base, size).map_err(|_| FramebufferError::InitializationFailed)?;
             return (driver.init)(base);
         }
     }

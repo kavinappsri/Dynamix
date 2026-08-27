@@ -1,6 +1,7 @@
 //! QEMU RAM framebuffer driver.
 
 use core::{cell::UnsafeCell, mem::size_of};
+use crate::mmu::va_to_pa;
 
 use crate::{
     Framebuffer, FramebufferError,
@@ -58,7 +59,7 @@ impl RamFb {
             .ok_or(FramebufferError::InitializationFailed)?;
         let pixels = DISPLAY_MEMORY.0.get().cast::<u32>();
         let config = RamFbConfig {
-            address: (pixels as usize as u64).to_be(),
+            address: (va_to_pa(pixels as usize) as u64).to_be(),
             fourcc: XRGB8888.to_be(),
             flags: 0,
             width: (WIDTH as u32).to_be(),

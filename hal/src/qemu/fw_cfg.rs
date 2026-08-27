@@ -4,6 +4,7 @@ use core::{
     mem::size_of,
     sync::atomic::{Ordering, compiler_fence},
 };
+use crate::mmu::va_to_pa;
 
 use crate::mmio::Mmio;
 
@@ -107,12 +108,12 @@ impl FwCfg {
         let mut access = DmaAccess {
             control: (((u32::from(selector)) << 16) | DMA_CONTROL_SELECT_AND_WRITE).to_be(),
             length: length.to_be(),
-            address: (object as *const T as usize as u64).to_be(),
+            address: (va_to_pa(object as *const T as usize) as u64).to_be(),
         };
 
         compiler_fence(Ordering::SeqCst);
         self.registers
-            .write64(DMA, (&mut access as *mut DmaAccess as usize as u64).to_be());
+            .write64(DMA, (va_to_pa(&mut access as *mut DmaAccess as usize) as u64).to_be());
 
         while u32::from_be(unsafe { core::ptr::read_volatile(&access.control) }) & !1 != 0 {
             core::hint::spin_loop();

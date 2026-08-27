@@ -9,8 +9,7 @@ __pycache__/
 *.pyc
 /.venv/
 
-# Logs
-*.log
+
 
 # Device-specific research
 Device_Docs/

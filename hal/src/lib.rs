@@ -45,6 +45,7 @@ mod sync;
 pub mod exceptions;
 pub mod power;
 pub mod timer;
+pub mod mmu;
 
 pub use device_tree::{DeviceTree, ProbeError, active_serial, probe_serial};
 pub use framebuffer::{Framebuffer, FramebufferError, probe_framebuffer};

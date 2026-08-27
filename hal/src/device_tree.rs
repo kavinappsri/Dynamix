@@ -18,7 +18,7 @@ pub trait DeviceTree {
     /// ```ignore
     /// let uart_base = tree.compatible_address("arm,pl011");
     /// ```
-    fn compatible_address(&self, compatible: &str) -> Option<usize>;
+    fn compatible_address(&self, compatible: &str) -> Option<(usize, usize)>;
 }
 
 /// A serial driver that can be selected from a device tree compatible string.
@@ -37,6 +37,7 @@ pub struct SerialDriver {
 pub enum ProbeError {
     /// No registered serial driver matched a node in the supplied tree.
     NoCompatibleSerialDriver,
+    MappingFailed
 }
 
 /// Registers a serial driver in the linker-retained discovery table.
@@ -95,7 +96,8 @@ fn serial_drivers() -> &'static [SerialDriver] {
 /// ```
 pub fn probe_serial(tree: &impl DeviceTree) -> Result<&'static dyn Serial, ProbeError> {
     for driver in serial_drivers() {
-        if let Some(base) = tree.compatible_address(driver.compatible) {
+        if let Some((base, size)) = tree.compatible_address(driver.compatible) {
+            crate::mmu::map_device(base, size).map_err(|_| ProbeError::MappingFailed)?;
             return Ok(*ACTIVE_SERIAL.get_or_init(|| (driver.init)(base)));
         }
     }

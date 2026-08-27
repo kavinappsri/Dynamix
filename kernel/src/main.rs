@@ -71,6 +71,13 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
     // Initialize Exception Vector table
     hal::exceptions::init();
 
+    //Initialize MMU services
+    hal::mmu::init().expect("MMU already initialized!");
+
+    //Map dtb
+    const DTB_MAP_WINDOW: usize = 2 * 1024 * 1024;
+    hal::mmu::map_normal(dtb_ptr, DTB_MAP_WINDOW).expect("DTB mapping failed");
+
     // Parse DTB
     let dtb = match unsafe { Dtb::from_ptr(dtb_ptr) } {
         Ok(tree) => tree,
