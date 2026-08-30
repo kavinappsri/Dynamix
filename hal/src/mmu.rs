@@ -13,7 +13,11 @@ pub fn init() -> Result<(), MmuError> {
     {
         crate::aarch64::aarch64_mmu::init()
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(target_arch = "arm")]
+    {
+        crate::armv7::armv7_mmu::init()
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "arm")))]
     {
         compile_error!("Unsupported architecture");
     }
@@ -24,7 +28,11 @@ pub fn map_device(phys: usize, len: usize) -> Result<(), MmuError> {
     {
         crate::aarch64::aarch64_mmu::map_device(phys as u64, len as u64)
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(target_arch = "arm")]
+    {
+        crate::armv7::armv7_mmu::map_device(phys as u32, len as u32)
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "arm")))]
     {
         compile_error!("Unsupported architecture");
     }
@@ -35,7 +43,11 @@ pub fn map_normal(phys: usize, len: usize) -> Result<(), MmuError> {
     {
         crate::aarch64::aarch64_mmu::map_normal(phys as u64, len as u64)
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(target_arch = "arm")]
+    {
+        crate::armv7::armv7_mmu::map_normal(phys as u32, len as u32)
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "arm")))]
     {
         compile_error!("Unsupported architecture");
     }
@@ -46,7 +58,11 @@ pub fn va_to_pa(addr: usize) -> usize {
     {
         crate::aarch64::aarch64_mmu::va_to_pa(addr as u64) as usize
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(target_arch = "arm")]
+    {
+        crate::armv7::armv7_mmu::va_to_pa(addr as u32) as usize
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "arm")))]
     {
         compile_error!("Unsupported architecture");
     }

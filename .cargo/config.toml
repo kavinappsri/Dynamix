@@ -20,5 +20,5 @@ rustflags = [
 runner = [
     "sh",
     "-c",
-    "rust-objcopy -O binary \"$0\" \"$0.bin\" && qemu-system-arm -machine virt -cpu cortex-a7 -device ramfb -serial stdio -monitor none -kernel \"$0.bin\""
+    "rust-objcopy -O binary \"$0\" \"$0.bin\" && qemu-system-arm -machine virt -cpu cortex-a7 -device ramfb -serial stdio -monitor none -d in_asm,int -D dynamix_asm_v7.log -kernel \"$0.bin\""
 ]
