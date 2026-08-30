@@ -19,6 +19,14 @@ pub trait DeviceTree {
     /// let uart_base = tree.compatible_address("arm,pl011");
     /// ```
     fn compatible_address(&self, compatible: &str) -> Option<(usize, usize)>;
+
+    type Node<'a>: DeviceTreeNode where Self: 'a;
+
+    fn compatible_node(&self, compatible: &str) -> Option<Self::Node<'_>>;
+}
+
+pub trait DeviceTreeNode {
+    fn get_prop_u32(&self, prop_name: &str) -> Option<u32>;
 }
 
 /// A serial driver that can be selected from a device tree compatible string.
@@ -29,7 +37,7 @@ pub struct SerialDriver {
     /// Device-tree `compatible` value handled by this driver.
     pub compatible: &'static str,
     /// Initializes the driver for the supplied mapped MMIO base address.
-    pub init: fn(usize) -> &'static dyn Serial,
+    pub init: fn(base: usize, node: Option<&dyn DeviceTreeNode>) -> &'static dyn Serial,
 }
 
 /// Failure to locate a serial driver for the supplied device tree.
@@ -98,7 +106,11 @@ pub fn probe_serial(tree: &impl DeviceTree) -> Result<&'static dyn Serial, Probe
     for driver in serial_drivers() {
         if let Some((base, size)) = tree.compatible_address(driver.compatible) {
             crate::mmu::map_device(base, size).map_err(|_| ProbeError::MappingFailed)?;
-            return Ok(*ACTIVE_SERIAL.get_or_init(|| (driver.init)(base)));
+
+            let node = tree.compatible_node(driver.compatible);
+            let node_ref = node.as_ref().map(|n| n as &dyn DeviceTreeNode);
+
+            return Ok(*ACTIVE_SERIAL.get_or_init(|| (driver.init)(base, node_ref)));
         }
     }
 

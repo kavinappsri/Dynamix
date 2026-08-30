@@ -5,6 +5,8 @@
 //! device-tree implementation: `reg` decoding supports common one- and
 //! two-cell address/size pairs and compatible matching is string-based.
 
+use hal::device_tree::DeviceTreeNode;
+
 const FDT_MAGIC: u32 = 0xD00DFEED;
 
 const FDT_BEGIN_NODE: u32 = 1;
@@ -341,10 +343,24 @@ fn read_be_u32(slice: &[u8], offset: usize) -> u32 {
     u32::from_be_bytes(bytes)
 }
 
+// HAL wiring, move to seperate module later
+
+impl DeviceTreeNode for Node<'_> {
+    fn get_prop_u32(&self, prop_name: &str) -> Option<u32> {
+        self.property(prop_name)?.as_u32()
+    }
+}
+
 impl hal::DeviceTree for Dtb<'_> {
     fn compatible_address(&self, compatible: &str) -> Option<(usize, usize)> {
         Dtb::find_compatible(self, compatible)
             .and_then(|node| node.reg())
             .map(|(base, size)| (base as usize, size as usize) )
+    }
+
+    type Node<'a> = Node<'a> where Self: 'a;
+
+    fn compatible_node(&self, compatible: &str) ->  Option<Self::Node<'_>> {
+        self.find_compatible(compatible)
     }
 }

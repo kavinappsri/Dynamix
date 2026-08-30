@@ -11,11 +11,12 @@ bench = false
 default = ["board-qemu-virt"]
 
 board-qemu-virt = ["driver-pl011", "driver-fw-cfg", "driver-ramfb"]
-board-rk3126 = []
+board-rk3126 = ["driver-dw-8250"]
 
 driver-pl011 = []
 driver-fw-cfg = []
 driver-ramfb = ["driver-fw-cfg"]
+driver-dw-8250 = []
 
 
 [dependencies]
