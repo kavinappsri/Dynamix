@@ -47,6 +47,8 @@ const DESC_SH_INNER: u64 = 0b11 << 8;
 const ATTR_IDX_NORMAL: u64 = 0 << 2;
 /// MAIR index 1: device memory (nGnRnE), used for MMIO mappings.
 const ATTR_IDX_DEVICE: u64 = 1 << 2;
+/// MAIR index 2: Normal non-cacheable memory
+const ATTR_IDX_DEVICE_NC: u64 = 2 << 2;
 
 /// Converts a higher-half kernel address to its physical address.
 ///
@@ -87,6 +89,7 @@ impl TableBumpAllocator {
 /// Memory type for a mapping
 pub enum MemType {
     Normal,
+    NormalNonCacheable,
     Device,
 }
 
@@ -94,6 +97,7 @@ impl MemType {
     const fn descriptor_bits(self) -> u64 {
         match self {
             MemType::Normal => ATTR_IDX_NORMAL | DESC_SH_INNER,
+            MemType::NormalNonCacheable => ATTR_IDX_DEVICE_NC | DESC_SH_INNER,
             MemType::Device => ATTR_IDX_DEVICE,
         }
     }
@@ -197,6 +201,17 @@ pub fn init() -> Result<(), MmuError> {
 /// region is exhausted.
 pub fn map_normal(phys: u64, len: u64) -> Result<(), MmuError> {
     map_impl(phys, len, MemType::Normal)
+}
+
+/// Identity-maps `len` bytes of Normal, non-cacheable memory starting at
+/// the physical address `phys`
+///
+/// # Errors
+/// Returns [`MmuError::MmuNotReady`] if called before [`init`], or
+/// [`MmuError::OutOfTableSpace`] if the reserved `.devicetables`
+/// region is exhausted.
+pub fn map_normal_nc(phys: u64, len: u64) -> Result<(), MmuError> {
+    map_impl(phys, len, MemType::NormalNonCacheable)
 }
 
 /// Identity-maps `len` bytes of device (MMIO) memory starting at the

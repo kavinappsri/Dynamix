@@ -114,7 +114,9 @@ ttbr1_l2_loop:
     str x4, [x26, x1, lsl #3]
 
     /* Program MAIR_EL1, TCR_EL1, TTBR0_EL1, TTBR1_EL1 */
-    mov x0, #0xFF
+    /* MAIR indexes - 0. 0xFF Normal; 1. 0x00 Device nGnRnE; 2. 0x44 Normal Non-Cacheable*/
+    movz x0, #0x00ff
+    movk x0, #0x0044, lsl #16
     msr mair_el1, x0
 
     movz x0, #0x3519

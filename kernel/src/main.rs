@@ -124,8 +124,8 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
     logo::draw_centered(display).expect("Failed to draw boot logo");
 
     //Automatic d-shut - ONLY FOR DEV TESTING - Remove to get to cmd line
-    //hal::timer::delay_ms(5000);   // <-------
-    //hal::power::system_off();         // <-------
+    hal::timer::delay_ms(5000);   // <-------
+    hal::power::system_off();         // <-------
 
     // Main Command Loop
     loop {

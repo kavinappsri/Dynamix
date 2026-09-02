@@ -57,6 +57,9 @@ const DESC_S_PAGE: u32 = 1 << 10;
 /// small pages; C/B sit at bits[3:2] for both.
 const DESC_NORMAL_SECTION: u32 = (0b001 << 12) | (1 << 3) | (1 << 2);
 const DESC_NORMAL_PAGE: u32 = (0b001 << 6) | (1 << 3) | (1 << 2);
+/// TEX=0b001, C=0, B=0: Normal memory, non-cacheable (outer & inner).
+const DESC_NORMAL_NC_SECTION: u32 = 0b001 << 12;
+const DESC_NORMAL_NC_PAGE: u32 = 0b001 << 6;
 /// TEX=0, C=0, B=0: Strongly-ordered/Device memory, used for MMIO.
 const DESC_DEVICE: u32 = 0;
 
@@ -102,6 +105,7 @@ impl TableBumpAllocator {
 #[derive(Copy, Clone)]
 pub enum MemType {
     Normal,
+    NormalNonCacheable,
     Device,
 }
 
@@ -109,6 +113,7 @@ impl MemType {
     const fn section_bits(self) -> u32 {
         match self {
             MemType::Normal => DESC_NORMAL_SECTION | DESC_S_SECTION,
+            MemType::NormalNonCacheable => DESC_NORMAL_NC_SECTION | DESC_S_SECTION,
             MemType::Device => DESC_DEVICE,
         }
     }
@@ -116,6 +121,7 @@ impl MemType {
     const fn page_bits(self) -> u32 {
         match self {
             MemType::Normal => DESC_NORMAL_PAGE | DESC_S_PAGE,
+            MemType::NormalNonCacheable => DESC_NORMAL_NC_PAGE | DESC_S_PAGE,
             MemType::Device => DESC_DEVICE,
         }
     }
@@ -223,6 +229,17 @@ pub fn init() -> Result<(), MmuError> {
 /// region is exhausted.
 pub fn map_normal(phys: u32, len: u32) -> Result<(), MmuError> {
     map_impl(phys, len, MemType::Normal)
+}
+
+/// Identity-maps `len` bytes of Normal, non-cacheable memory starting at
+/// the physical address `phys`
+///
+/// # Errors
+///Returns [`MmuError::MmuNotReady`] if called before [`init`], or
+/// [`MmuError::OutOfTableSpace`] if the reserved `.devicetables`
+/// region is exhausted.
+pub fn map_normal_nc(phys: u32, len: u32) -> Result<(), MmuError> {
+    map_impl(phys, len, MemType::NormalNonCacheable)
 }
 
 /// Identity-maps `len` bytes of device (MMIO) memory starting at the
