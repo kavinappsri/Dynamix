@@ -17,8 +17,8 @@ const WIDTH: usize = 1024;
 const HEIGHT: usize = 600;
 const PIXEL_COUNT: usize = WIDTH * HEIGHT;
 
-// This is the byte-level payload defined by QEMU's `etc/ramfb` fw_cfg file.
-// It has no trailing padding: QEMU expects exactly 28 bytes.
+// Byte-level payload defined by QEMU's `etc/ramfb` fw_cfg file.
+// Has no trailing padding - QEMU expects only 28 bytes.
 #[repr(C, packed)]
 struct RamFbConfig {
     address: u64,

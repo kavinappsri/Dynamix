@@ -41,6 +41,10 @@ SECTIONS
         __start_framebuffer_drivers = .;
         KEEP(*(.drivers.framebuffer))
         __stop_framebuffer_drivers = .;
+
+        __start_clock_drivers = .;
+        KEEP(*(.drivers.clocks))
+        __stop_clock_drivers = .;
     }
 
     .data : AT(NOMINAL_LMA + (ADDR(.data) - _kernel_vma_start))

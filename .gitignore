@@ -9,6 +9,9 @@ __pycache__/
 *.pyc
 /.venv/
 
+# Logs
+dynamix_asm.log
+dynamix_asm_v7.log
 
 
 # Device-specific research
@@ -17,3 +20,7 @@ Device_Docs/
 # Added by cargo
 /target
 /.cargo/
+
+# Misc
+Archive.zip
+digest.txt
