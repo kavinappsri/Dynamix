@@ -3,9 +3,9 @@
 //! On-demand mapping of additional physical memory into TTBR0. Can be
 //! mapped as either device or normal
 
+use crate::services::mmu::MmuError;
 use core::arch::asm;
 use core::sync::atomic::{AtomicU32, Ordering};
-use crate::mmu::MmuError;
 
 unsafe extern "C" {
     static _boottables_start: u8;

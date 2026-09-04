@@ -61,8 +61,8 @@ macro_rules! register_framebuffer_driver {
     ($ident:ident, $compat:expr, $init_fn:path) => {
         #[used]
         #[unsafe(link_section = ".drivers.framebuffer")]
-        static $ident: $crate::framebuffer::FramebufferDriver =
-            $crate::framebuffer::FramebufferDriver {
+        static $ident: $crate::driver_traits::framebuffer::FramebufferDriver =
+            $crate::driver_traits::framebuffer::FramebufferDriver {
                 name: stringify!($ident),
                 compatible: $compat,
                 init: $init_fn,
@@ -92,7 +92,7 @@ pub fn probe_framebuffer(
 ) -> Result<&'static dyn Framebuffer, FramebufferError> {
     for driver in framebuffer_drivers() {
         if let Some((base, size)) = tree.compatible_address(driver.compatible) {
-            crate::mmu::map_device(base, size).map_err(|_| FramebufferError::InitializationFailed)?;
+            crate::services::mmu::map_device(base, size).map_err(|_| FramebufferError::InitializationFailed)?;
             return (driver.init)(base);
         }
     }

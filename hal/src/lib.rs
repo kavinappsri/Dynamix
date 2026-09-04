@@ -21,19 +21,6 @@
 //! ```
 
 
-/// Architecture independent device drivers.
-pub mod common;
-/// Driver discovery based on bootloader device-tree data.
-pub mod device_tree;
-/// Generic framebuffer interface and driver discovery.
-pub mod framebuffer;
-/// Volatile access to identity-mapped MMIO register blocks.
-pub mod mmio;
-#[cfg(any(feature = "driver-fw-cfg", feature = "driver-ramfb"))]
-/// Drivers for virtual devices exposed by QEMU `virt`.
-pub mod qemu;
-/// Common polling serial-device interface.
-pub mod serial;
 /// Aarch64 dependent features
 #[cfg(target_arch = "aarch64")]
 pub mod aarch64;
@@ -41,16 +28,13 @@ pub mod aarch64;
 #[cfg(target_arch = "arm")]
 pub mod armv7;
 
-mod sync;
-pub mod exceptions;
-pub mod power;
-pub mod timer;
-pub mod mmu;
-pub mod clocks;
+pub mod drivers;
+pub mod services;
+pub mod driver_traits;
 
-pub use device_tree::{DeviceTree, ProbeError, active_serial, probe_serial};
-pub use framebuffer::{Framebuffer, FramebufferError, probe_framebuffer};
-pub use serial::Serial;
+pub use driver_traits::device_tree::{DeviceTree, ProbeError, active_serial, probe_serial};
+pub use driver_traits::framebuffer::{Framebuffer, FramebufferError, probe_framebuffer};
+pub use driver_traits::serial::Serial;
 
 use core::arch::global_asm;
 

@@ -1,14 +1,14 @@
 //! QEMU RAM framebuffer driver.
 
+use crate::services::mmu::va_to_pa;
 use core::{cell::UnsafeCell, mem::size_of};
-use crate::mmu::va_to_pa;
 
+use crate::driver_traits::framebuffer::FramebufferError::{DestinationOutOfBounds, DimensionsOverflow, SourceTooSmall};
+use crate::drivers::qemu::fw_cfg::FwCfg;
+use crate::services::sync::StaticCell;
 use crate::{
     Framebuffer, FramebufferError,
-    framebuffer::FramebufferError::{DestinationOutOfBounds, DimensionsOverflow, SourceTooSmall},
-    qemu::fw_cfg::FwCfg,
     register_framebuffer_driver,
-    sync::StaticCell,
 };
 
 const RAMFB_FILE: &str = "etc/ramfb";

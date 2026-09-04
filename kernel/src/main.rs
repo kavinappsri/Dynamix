@@ -69,14 +69,14 @@ fn panic(info: &PanicInfo) -> ! {
 /// a compiled framebuffer driver cannot be initialized.
 pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
     // Initialize Exception Vector table
-    hal::exceptions::init();
+    hal::services::exceptions::init();
 
     //Initialize MMU services
-    hal::mmu::init().expect("MMU already initialized!");
+    hal::services::mmu::init().expect("MMU already initialized!");
 
     //Map dtb
     const DTB_MAP_WINDOW: usize = 2 * 1024 * 1024;
-    hal::mmu::map_normal(dtb_ptr, DTB_MAP_WINDOW).expect("DTB mapping failed");
+    hal::services::mmu::map_normal(dtb_ptr, DTB_MAP_WINDOW).expect("DTB mapping failed");
 
     // Parse DTB
     let dtb = match unsafe { Dtb::from_ptr(dtb_ptr) } {
@@ -91,6 +91,12 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
 
     console.writeln("Dynamix v0.1.0\n");
     console.writeln("[+] DTB, UART Found");
+
+    // Set up the clocks, if the device has one
+    match hal::driver_traits::clocks::probe_clocks(&dtb) {
+        Ok(_) => console.writeln("[+] Clock controller found"),
+        Err(_) => console.writeln("[ ] No compatible clock controller in DTB"),
+    }
 
     // Set up a display through a compiled HAL framebuffer driver.
     console.writeln("[+] Discovering framebuffer");
@@ -108,7 +114,7 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
 
             match psci.property("method") {
                 Some(method) => {
-                    hal::power::init(method.as_str().unwrap());
+                    hal::services::power::init(method.as_str().unwrap());
                     console.writeln("[+] PSCI Method found and set");
                 }
                 None => {
@@ -124,8 +130,8 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
     logo::draw_centered(display).expect("Failed to draw boot logo");
 
     //Automatic d-shut - ONLY FOR DEV TESTING - Remove to get to cmd line
-    hal::timer::delay_ms(5000);   // <-------
-    hal::power::system_off();         // <-------
+    hal::services::timer::delay_ms(5000);   // <-------
+    hal::services::power::system_off();         // <-------
 
     // Main Command Loop
     loop {
@@ -136,7 +142,7 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
         match &command_buffer[..length] {
             b"shutdown" => {
                 console.writeln("Shutting down");
-                hal::power::system_off();
+                hal::services::power::system_off();
             }
             b"logo" => {
                 display.fill(0x00_00_00_00);
@@ -169,9 +175,9 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
                 console.writeln("Screen set to Yellow");
             }
             b"d-shut" => {
-                hal::timer::delay_ms(5000);
+                hal::services::timer::delay_ms(5000);
 
-                hal::power::system_off();
+                hal::services::power::system_off();
             }
             b"kavin" => {
                 console.writeln("Kavin is always better than gootam");

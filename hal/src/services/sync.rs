@@ -7,7 +7,7 @@ use core::{
 };
 
 /// A value initialized once and then shared for the remainder of the boot.
-pub(crate) struct StaticCell<T> {
+pub struct StaticCell<T> {
     state: AtomicU8,
     value: UnsafeCell<MaybeUninit<T>>,
 }

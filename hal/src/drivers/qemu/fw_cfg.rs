@@ -1,12 +1,12 @@
 //! QEMU firmware configuration (`fw_cfg`) device.
 
+use crate::services::mmu::va_to_pa;
 use core::{
     mem::size_of,
     sync::atomic::{Ordering, compiler_fence},
 };
-use crate::mmu::va_to_pa;
 
-use crate::mmio::Mmio;
+use crate::services::mmio::Mmio;
 
 const DATA: usize = 0x00;
 const SELECTOR: usize = 0x08;
@@ -24,7 +24,7 @@ struct DmaAccess {
 
 /// Errors returned by the `fw_cfg` driver.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FwCfgError {
+pub enum FwCfgError {
     /// A requested file name cannot fit in an `fw_cfg` directory entry.
     FileNameTooLong,
     /// A Rust object is too large to express in the device's 32-bit DMA length.
@@ -32,7 +32,7 @@ pub(crate) enum FwCfgError {
 }
 
 /// A mapped QEMU `fw_cfg` device.
-pub(crate) struct FwCfg {
+pub struct FwCfg {
     registers: Mmio,
 }
 
@@ -42,7 +42,7 @@ impl FwCfg {
     /// # Safety
     /// `base` must be a mapped QEMU `fw_cfg` MMIO device.
     /// The device must remain accessible for the value's lifetime.
-    pub(crate) const unsafe fn new(base: usize) -> Self {
+    pub const unsafe fn new(base: usize) -> Self {
         Self {
             // SAFETY: upheld by this constructor's contract.
             registers: unsafe { Mmio::new(base) },
@@ -66,7 +66,7 @@ impl FwCfg {
     /// }
     /// # Ok::<(), hal::FwCfgError>(())
     /// ```
-    pub(crate) fn find_file(&self, name: &str) -> Result<Option<u16>, FwCfgError> {
+    pub fn find_file(&self, name: &str) -> Result<Option<u16>, FwCfgError> {
         let name = name.as_bytes();
         if name.len() >= DIRECTORY_NAME_LENGTH {
             return Err(FwCfgError::FileNameTooLong);
@@ -103,7 +103,7 @@ impl FwCfg {
     ///
     /// Returns [`FwCfgError::TransferTooLarge`] if `T` is larger than the
     /// 32-bit length field accepted by `fw_cfg` DMA.
-    pub(crate) fn write_object<T>(&self, selector: u16, object: &T) -> Result<(), FwCfgError> {
+    pub fn write_object<T>(&self, selector: u16, object: &T) -> Result<(), FwCfgError> {
         let length = u32::try_from(size_of::<T>()).map_err(|_| FwCfgError::TransferTooLarge)?;
         let mut access = DmaAccess {
             control: (((u32::from(selector)) << 16) | DMA_CONTROL_SELECT_AND_WRITE).to_be(),

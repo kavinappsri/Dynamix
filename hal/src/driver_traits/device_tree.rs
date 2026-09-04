@@ -1,6 +1,7 @@
 //! Device-tree based discovery of the small set of drivers supported at boot.
 
-use crate::{Serial, sync::StaticCell};
+use crate::services::sync::StaticCell;
+use crate::Serial;
 
 static ACTIVE_SERIAL: StaticCell<&'static dyn Serial> = StaticCell::uninit();
 
@@ -64,7 +65,7 @@ macro_rules! register_serial_driver {
     ($ident:ident, $compat:expr, $init_fn:path) => {
         #[used]
         #[unsafe(link_section = ".drivers.serial")]
-        static $ident: $crate::device_tree::SerialDriver = $crate::device_tree::SerialDriver {
+        static $ident: $crate::driver_traits::device_tree::SerialDriver = $crate::driver_traits::device_tree::SerialDriver {
             name: stringify!($ident),
             compatible: $compat,
             init: $init_fn,
@@ -105,7 +106,7 @@ fn serial_drivers() -> &'static [SerialDriver] {
 pub fn probe_serial(tree: &impl DeviceTree) -> Result<&'static dyn Serial, ProbeError> {
     for driver in serial_drivers() {
         if let Some((base, size)) = tree.compatible_address(driver.compatible) {
-            crate::mmu::map_device(base, size).map_err(|_| ProbeError::MappingFailed)?;
+            crate::services::mmu::map_device(base, size).map_err(|_| ProbeError::MappingFailed)?;
 
             let node = tree.compatible_node(driver.compatible);
             let node_ref = node.as_ref().map(|n| n as &dyn DeviceTreeNode);

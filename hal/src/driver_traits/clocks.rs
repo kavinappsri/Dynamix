@@ -1,7 +1,7 @@
 //! Generic clock controller interface and driver discovery
 
 use crate::DeviceTree;
-use crate::sync::StaticCell;
+use crate::services::sync::StaticCell;
 
 static ACTIVE_CLOCK: StaticCell<&'static dyn ClockController> = StaticCell::uninit();
 
@@ -38,7 +38,7 @@ macro_rules! register_clock_driver {
     ($ident:ident, $compat:expr, $init_fn:path) => {
         #[used]
         #[unsafe(link_section = ".drivers.clocks")]
-        static $ident: $crate::clocks::ClockDriver = $crate::clocks::ClockDriver {
+        static $ident: $crate::driver_traits::clocks::ClockDriver = $crate::driver_traits::clocks::ClockDriver {
             name: stringify!($ident),
             compatible: $compat,
             init: $init_fn,
@@ -72,7 +72,7 @@ pub enum ClockProbeError {
 pub fn probe_clocks(tree: &impl DeviceTree) -> Result<&'static dyn ClockController, ClockProbeError> {
     for driver in clock_drivers() {
         if let Some((base, size)) = tree.compatible_address(driver.compatible) {
-            crate::mmu::map_device(base, size).map_err(|_| ClockProbeError::MappingFailed)?;
+            crate::services::mmu::map_device(base, size).map_err(|_| ClockProbeError::MappingFailed)?;
             return Ok(*ACTIVE_CLOCK.get_or_init(|| (driver.init)(base)));
         }
     }

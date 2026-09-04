@@ -3,9 +3,9 @@
 //! On Demand mapping of additional physical memory. Can be mappad as both
 //! device or normal
 
+use crate::services::mmu::MmuError;
 use core::arch::asm;
 use core::sync::atomic::{AtomicU64, Ordering};
-use crate::mmu::MmuError;
 
 unsafe extern "C" {
     static _boottables_start: u8;

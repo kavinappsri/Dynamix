@@ -5,7 +5,7 @@
 //! device-tree implementation: `reg` decoding supports common one- and
 //! two-cell address/size pairs and compatible matching is string-based.
 
-use hal::device_tree::DeviceTreeNode;
+use hal::driver_traits::device_tree::DeviceTreeNode;
 
 const FDT_MAGIC: u32 = 0xD00DFEED;
 

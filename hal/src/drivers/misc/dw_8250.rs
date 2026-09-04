@@ -1,9 +1,9 @@
 //! DesignWare 8250 UART Driver
 
-use crate::mmio::Mmio;
 use crate::Serial;
-use crate::sync::StaticCell;
 use crate::register_serial_driver;
+use crate::services::mmio::Mmio;
+use crate::services::sync::StaticCell;
 
 pub struct Dw8250Uart {
     base: Mmio,
@@ -95,7 +95,7 @@ impl Serial for Dw8250Uart {
     }
 }
 
-fn init_dw_8250_uart(base: usize, node: Option<&dyn crate::device_tree::DeviceTreeNode>) -> &'static dyn Serial {
+fn init_dw_8250_uart(base: usize, node: Option<&dyn crate::driver_traits::device_tree::DeviceTreeNode>) -> &'static dyn Serial {
     static INSTANCE: StaticCell<Dw8250Uart> = StaticCell::uninit();
 
     let clock_hz = node
