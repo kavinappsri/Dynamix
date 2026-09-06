@@ -1,6 +1,6 @@
 //! Generic framebuffer output and device-tree driver discovery.
 
-use crate::DeviceTree;
+use crate::services::dtb::Dtb;
 
 /// A pixel-addressable XRGB8888 framebuffer.
 ///
@@ -87,11 +87,9 @@ fn framebuffer_drivers() -> &'static [FramebufferDriver] {
 }
 
 /// Finds and initializes the first compiled framebuffer driver in `tree`.
-pub fn probe_framebuffer(
-    tree: &impl DeviceTree,
-) -> Result<&'static dyn Framebuffer, FramebufferError> {
+pub fn probe_framebuffer(tree: &Dtb) -> Result<&'static dyn Framebuffer, FramebufferError> {
     for driver in framebuffer_drivers() {
-        if let Some((base, size)) = tree.compatible_address(driver.compatible) {
+        if let Some((base, size)) = tree.find_compatible_address(driver.compatible) {
             crate::services::mmu::map_device(base, size).map_err(|_| FramebufferError::InitializationFailed)?;
             return (driver.init)(base);
         }

@@ -1,7 +1,7 @@
 //! Generic clock controller interface and driver discovery
 
-use crate::DeviceTree;
 use crate::services::sync::StaticCell;
+use crate::services::dtb::Dtb;
 
 static ACTIVE_CLOCK: StaticCell<&'static dyn ClockController> = StaticCell::uninit();
 
@@ -69,9 +69,9 @@ pub enum ClockProbeError {
 
 /// Finds and initializes the first registered clock controller present in
 /// `tree`, mapping its registers as device memory.
-pub fn probe_clocks(tree: &impl DeviceTree) -> Result<&'static dyn ClockController, ClockProbeError> {
+pub fn probe_clocks(tree: &Dtb) -> Result<&'static dyn ClockController, ClockProbeError> {
     for driver in clock_drivers() {
-        if let Some((base, size)) = tree.compatible_address(driver.compatible) {
+        if let Some((base, size)) = tree.find_compatible_address(driver.compatible) {
             crate::services::mmu::map_device(base, size).map_err(|_| ClockProbeError::MappingFailed)?;
             return Ok(*ACTIVE_CLOCK.get_or_init(|| (driver.init)(base)));
         }
