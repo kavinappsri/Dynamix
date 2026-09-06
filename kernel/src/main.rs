@@ -11,14 +11,12 @@
 
 /// Polled console input and output over a HAL serial device.
 pub mod console;
-/// Minimal Flattened Device Tree parser used during boot discovery.
-pub mod dtb;
 /// Embedded boot-logo rendering.
 pub mod logo;
 
 use crate::console::Console;
-use crate::dtb::Dtb;
 use core::panic::PanicInfo;
+use hal::services::dtb::Dtb;
 use hal::{active_serial, probe_framebuffer, probe_serial};
 
 #[panic_handler]

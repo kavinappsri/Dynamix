@@ -1,7 +1,8 @@
-//! Device-tree based discovery of the small set of drivers supported at boot.
+//! Device-tree based discovery of drivers supported at boot.
 
 use crate::services::sync::StaticCell;
 use crate::Serial;
+
 
 static ACTIVE_SERIAL: StaticCell<&'static dyn Serial> = StaticCell::uninit();
 

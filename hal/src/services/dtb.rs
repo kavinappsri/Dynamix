@@ -5,7 +5,7 @@
 //! device-tree implementation: `reg` decoding supports common one- and
 //! two-cell address/size pairs and compatible matching is string-based.
 
-use hal::driver_traits::device_tree::DeviceTreeNode;
+use crate::driver_traits::device_tree::DeviceTreeNode;
 
 const FDT_MAGIC: u32 = 0xD00DFEED;
 
@@ -351,7 +351,7 @@ impl DeviceTreeNode for Node<'_> {
     }
 }
 
-impl hal::DeviceTree for Dtb<'_> {
+impl crate::DeviceTree for Dtb<'_> {
     fn compatible_address(&self, compatible: &str) -> Option<(usize, usize)> {
         Dtb::find_compatible(self, compatible)
             .and_then(|node| node.reg())
