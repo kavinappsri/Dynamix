@@ -2,7 +2,9 @@
 
 use crate::services::mmio::Mmio;
 use crate::services::sync::StaticCell;
-use crate::{Serial, register_serial_driver};
+use crate::{Serial};
+use crate::register_driver;
+use crate::driver_traits::driver::Driver;
 
 /// A PL011 UART whose registers are directly mapped into the address space.
 pub struct Pl011Uart {
@@ -57,4 +59,6 @@ fn init_pl011_uart(base: usize, _tree: &crate::services::dtb::Dtb) -> &'static d
     })
 }
 
-register_serial_driver!(PL011_UART, "arm,pl011", init_pl011_uart);
+
+
+register_driver!(PL011_UART, "arm,pl011", init_pl011_uart, Serial);

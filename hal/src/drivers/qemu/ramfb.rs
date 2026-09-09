@@ -10,6 +10,7 @@ use crate::{
     Framebuffer, FramebufferError,
     register_framebuffer_driver,
 };
+use crate::driver_traits::driver::Driver;
 
 const RAMFB_FILE: &str = "etc/ramfb";
 const XRGB8888: u32 = 0x3432_5258;

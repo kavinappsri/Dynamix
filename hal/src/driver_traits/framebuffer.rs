@@ -1,5 +1,6 @@
 //! Generic framebuffer output and device-tree driver discovery.
 
+use crate::define_probe;
 use crate::services::dtb::Dtb;
 
 /// A pixel-addressable XRGB8888 framebuffer.
@@ -69,6 +70,8 @@ macro_rules! register_framebuffer_driver {
             };
     };
 }
+
+define_probe!("__start_framebuffer_drivers", "__stop_framebuffer_drivers", probe_fframebuffer, Framebuffer ,|_d| {});
 
 unsafe extern "C" {
     static __start_framebuffer_drivers: u8;

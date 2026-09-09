@@ -17,7 +17,8 @@ pub mod logo;
 use crate::console::Console;
 use core::panic::PanicInfo;
 use hal::services::dtb::Dtb;
-use hal::{active_serial, probe_framebuffer, probe_serial};
+use hal::{active_serial, probe_framebuffer};
+use hal::driver_traits::{serial, framebuffer};
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -83,7 +84,7 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
     };
 
     // Set up UART & Console
-    let uart = probe_serial(&dtb).expect("No compatible serial driver in DTB");
+    let uart = serial::probe_serial(&dtb).expect("No compatible serial driver in DTB");
     let mut console = Console::new(uart);
     let mut command_buffer = [0u8; 128];
 
@@ -98,7 +99,7 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
 
     // Set up a display through a compiled HAL framebuffer driver.
     console.writeln("[+] Discovering framebuffer");
-    let display = probe_framebuffer(&dtb).expect("No compatible framebuffer driver in DTB");
+    let display = framebuffer::probe_fframebuffer(&dtb).expect("No compatible framebuffer driver in DTB");
 
 
     // Set up power
@@ -128,8 +129,8 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
     logo::draw_centered(display).expect("Failed to draw boot logo");
 
     //Automatic d-shut - ONLY FOR DEV TESTING - Remove to get to cmd line
-    hal::services::timer::delay_ms(5000);   // <-------
-    hal::services::power::system_off();         // <-------
+    //hal::services::timer::delay_ms(5000);   // <-------
+    //hal::services::power::system_off();         // <-------
 
     // Main Command Loop
     loop {

@@ -33,6 +33,7 @@ SECTIONS {
 
     .drivers : AT(NOMINAL_LMA + (ADDR(.drivers) - _kernel_vma_start))
     {
+        __start_drivers = .;
         __start_serial_drivers = .;
         KEEP(*(.drivers.serial))
         __stop_serial_drivers = .;
@@ -40,6 +41,11 @@ SECTIONS {
         __start_framebuffer_drivers = .;
         KEEP(*(.drivers.framebuffer))
         __stop_framebuffer_drivers = .;
+
+        __start_clock_drivers = .;
+        KEEP(*(.drivers.clocks))
+        __stop_clock_drivers = .;
+        __stop_drivers = .;
     }
 
     .data : AT(NOMINAL_LMA + (ADDR(.data) - _kernel_vma_start))

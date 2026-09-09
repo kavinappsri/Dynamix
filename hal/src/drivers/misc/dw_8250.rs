@@ -1,9 +1,9 @@
 //! DesignWare 8250 UART Driver
 
-use crate::Serial;
-use crate::register_serial_driver;
+use crate::{register_driver, Serial};
 use crate::services::mmio::Mmio;
 use crate::services::sync::StaticCell;
+use crate::driver_traits::driver::Driver;
 
 pub struct Dw8250Uart {
     base: Mmio,
@@ -108,4 +108,4 @@ fn init_dw_8250_uart(base: usize, tree: &crate::services::dtb::Dtb) -> &'static 
     })
 }
 
-register_serial_driver!(DW_8250_UART, "rockchip,serial", init_dw_8250_uart);
+register_driver!(DW_8250_UART, "rockchip,serial", init_dw_8250_uart, Serial);
