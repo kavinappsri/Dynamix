@@ -33,7 +33,7 @@ pub mod services;
 pub mod driver_traits;
 
 
-pub use driver_traits::framebuffer::{Framebuffer, FramebufferError, probe_framebuffer};
+pub use driver_traits::framebuffer::{Framebuffer, FramebufferError};
 pub use driver_traits::serial::{Serial, active_serial, probe_serial};
 
 use core::arch::global_asm;

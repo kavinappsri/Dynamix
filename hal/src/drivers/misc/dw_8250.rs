@@ -3,7 +3,7 @@
 use crate::{register_driver, Serial};
 use crate::services::mmio::Mmio;
 use crate::services::sync::StaticCell;
-use crate::driver_traits::driver::Driver;
+use crate::driver_traits::driver::{Driver, DriverProbeError};
 
 pub struct Dw8250Uart {
     base: Mmio,
@@ -95,7 +95,7 @@ impl Serial for Dw8250Uart {
     }
 }
 
-fn init_dw_8250_uart(base: usize, tree: &crate::services::dtb::Dtb) -> &'static dyn Serial {
+fn init_dw_8250_uart(base: usize, tree: &crate::services::dtb::Dtb) -> Result<&'static dyn Serial, DriverProbeError> {
     static INSTANCE: StaticCell<Dw8250Uart> = StaticCell::uninit();
 
     let clock_hz = tree
@@ -103,9 +103,9 @@ fn init_dw_8250_uart(base: usize, tree: &crate::services::dtb::Dtb) -> &'static 
         .and_then(|n| n.property("clock-frequency")?.as_u32())
         .unwrap_or(24_000_000);
 
-    INSTANCE.get_or_init(|| {
+    Ok(INSTANCE.get_or_init(|| {
         unsafe {Dw8250Uart::new(base, clock_hz, 115200)}
-    })
+    }))
 }
 
 register_driver!(DW_8250_UART, "rockchip,serial", init_dw_8250_uart, Serial);

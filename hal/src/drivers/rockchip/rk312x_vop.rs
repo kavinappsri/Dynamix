@@ -9,13 +9,15 @@
 
 use core::cell::UnsafeCell;
 use crate::driver_traits::clocks::ClockController;
+use crate::driver_traits::driver::DriverProbeError;
 use crate::driver_traits::framebuffer::{FramebufferError, Framebuffer};
 use crate::services::mmio::Mmio;
 use crate::services::mmu::va_to_pa;
 use crate::drivers::rockchip::rk312x_cru::Rk3126Clock;
-use crate::register_framebuffer_driver;
+use crate::register_driver;
 use crate::services::sync::StaticCell;
-
+use crate::driver_traits::driver::Driver;
+use crate::services::dtb::Dtb;
 // --- Register Offsets ---
 
 const SYS_CTRL: usize = 0x00;
@@ -140,26 +142,26 @@ impl Rk312xVop {
     }
 
     /// Un-gates and rate-sets every clock the VOP output path needs
-    fn bring_up_clocks(clocks: &dyn ClockController, mode: &Mode) -> Result<(), FramebufferError> {
+    fn bring_up_clocks(clocks: &dyn ClockController, mode: &Mode) -> Result<(), DriverProbeError> {
         clocks
             .enable(Rk3126Clock::AclkLcdc0 as u32)
-            .map_err(|_| FramebufferError::InitializationFailed)?;
+            .map_err(|_| DriverProbeError::InitFailed)?;
         clocks
             .enable(Rk3126Clock::HclkLcdc0 as u32)
-            .map_err(|_| FramebufferError::InitializationFailed)?;
+            .map_err(|_| DriverProbeError::InitFailed)?;
 
         // The divider must be programmed before the pixel clock is ungated
         clocks
             .set_rate(Rk3126Clock::DclkVop as u32, mode.pixel_clock_hz)
-            .map_err(|_| FramebufferError::InitializationFailed)?;
+            .map_err(|_| DriverProbeError::InitFailed)?;
         clocks
             .enable(Rk3126Clock::DclkVop as u32)
-            .map_err(|_| FramebufferError::InitializationFailed)?;
+            .map_err(|_| DriverProbeError::InitFailed)?;
 
         Ok(())
     }
 
-    fn configure(vop_base: usize, clocks: &dyn ClockController) -> Result<Self, FramebufferError> {
+    fn configure(vop_base: usize, clocks: &dyn ClockController) -> Result<Self, DriverProbeError> {
         let mode = DEFAULT_MODE;
         Self::bring_up_clocks(clocks, &mode)?;
 
@@ -314,13 +316,12 @@ impl Framebuffer for Rk312xVop {
     }
 }
 
-fn init_rk312x_vop(vop_base: usize) -> Result<&'static dyn Framebuffer, FramebufferError> {
+fn init_rk312x_vop(vop_base: usize, _tree: &Dtb) -> Result<&'static dyn Framebuffer, DriverProbeError> {
     static INSTANCE: StaticCell<Rk312xVop> = StaticCell::uninit();
-    let clocks = crate::driver_traits::clocks::active_clock().ok_or(FramebufferError::InitializationFailed)?;
+    let clocks = crate::driver_traits::clocks::active_clock().ok_or(DriverProbeError::InitFailed)?;
 
     let vop = Rk312xVop::configure(vop_base, clocks)?;
     let vop: &'static Rk312xVop = INSTANCE.get_or_init(|| vop);
     Ok(vop)
 }
-
-register_framebuffer_driver!(RK312X_VOP, "rockchip,rk312x-lcdc", init_rk312x_vop);
+register_driver!(RK312X_VOP, "rockchip,rk312x-lcdc", init_rk312x_vop, Framebuffer);

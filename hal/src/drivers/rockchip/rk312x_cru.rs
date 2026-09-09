@@ -5,9 +5,12 @@
 //! 32 bit write as a write mask
 
 use crate::driver_traits::clocks::{ClockController, ClockError};
-use crate::register_clock_driver;
+use crate::driver_traits::driver::DriverProbeError;
+use crate::register_driver;
+use crate::services::dtb::Dtb;
 use crate::services::mmio::Mmio;
 use crate::services::sync::StaticCell;
+use crate::driver_traits::driver::Driver;
 
 const OSC_HZ: u32 = 24_000_000;
 
@@ -304,12 +307,10 @@ impl ClockController for Rk3126Cru {
     }
 }
 
-fn init_rk3126_cru(base: usize) -> &'static dyn ClockController {
+fn init_rk3126_cru(base: usize, _tree: &Dtb) -> Result<&'static dyn ClockController, DriverProbeError> {
     static INSTANCE: StaticCell<Rk3126Cru> = StaticCell::uninit();
-    // SAFETY: `base` came from the validated, mapped device tree via
-    // `probe_clocks`.
     let cru = unsafe { Rk3126Cru::new(base) };
-    INSTANCE.get_or_init(|| cru)
+    Ok(INSTANCE.get_or_init(|| cru))
 }
 
-register_clock_driver!(RK3126_CRU, "rockchip,rk3126-cru", init_rk3126_cru);
+register_driver!(RK3126_CRU, "rockchip,rk3126-cru", init_rk3126_cru, ClockController);

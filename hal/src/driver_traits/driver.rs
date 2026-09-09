@@ -11,7 +11,7 @@ use crate::services::dtb::Dtb;
 pub struct Driver<T: 'static + ?Sized> {
     pub name: &'static str,
     pub compatible: &'static str,
-    pub init: fn(base: usize, node: &Dtb) -> &'static T,
+    pub init: fn(base: usize, node: &Dtb) -> Result<&'static T, DriverProbeError>,
 }
 
 
@@ -20,6 +20,7 @@ pub struct Driver<T: 'static + ?Sized> {
 pub enum DriverProbeError {
     NoCompatibleDriver,
     MappingFailed,
+    InitFailed,
 }
 
 /// Macro for drivers to compile themselves in the binary
@@ -41,8 +42,8 @@ macro_rules! register_driver {
     ($name:ident, $compat:literal, $init_fn:expr, Framebuffer) => {
         $crate::register_driver!(@internal $name, $compat, $init_fn, Framebuffer, ".drivers.framebuffer");
     };
-    ($name:ident, $compat:literal, $init_fn:expr, Clock) => {
-        $crate::register_driver!(@internal $name, $compat, $init_fn, Clock, ".drivers.clock");
+    ($name:ident, $compat:literal, $init_fn:expr, ClockController) => {
+        $crate::register_driver!(@internal $name, $compat, $init_fn, ClockController, ".drivers.clock");
     };
 }
 /// Internal implementation for all probe sriver functions
@@ -55,7 +56,8 @@ pub fn probe_driver<D: 'static + ?Sized>(start_tag: *const u8, stop_tag: *const 
     for driver in drivers {
         if let Some((base, size)) = tree.find_compatible_address(driver.compatible) {
             crate::services::mmu::map_device(base, size).map_err(|_| DriverProbeError::MappingFailed)?;
-            return Ok((driver.init)(base, tree));
+            let initialized_driver = (driver.init)(base, tree)?;
+            return Ok(initialized_driver);
         }
     }
 

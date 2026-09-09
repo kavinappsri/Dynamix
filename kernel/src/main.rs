@@ -17,7 +17,7 @@ pub mod logo;
 use crate::console::Console;
 use core::panic::PanicInfo;
 use hal::services::dtb::Dtb;
-use hal::{active_serial, probe_framebuffer};
+use hal::{active_serial};
 use hal::driver_traits::{serial, framebuffer};
 
 #[panic_handler]
@@ -92,14 +92,14 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
     console.writeln("[+] DTB, UART Found");
 
     // Set up the clocks, if the device has one
-    match hal::driver_traits::clocks::probe_clocks(&dtb) {
+    match hal::driver_traits::clocks::probe_cclocks(&dtb) {
         Ok(_) => console.writeln("[+] Clock controller found"),
         Err(_) => console.writeln("[ ] No compatible clock controller in DTB"),
     }
 
     // Set up a display through a compiled HAL framebuffer driver.
     console.writeln("[+] Discovering framebuffer");
-    let display = framebuffer::probe_fframebuffer(&dtb).expect("No compatible framebuffer driver in DTB");
+    let display = framebuffer::probe_framebuffer(&dtb).expect("No compatible framebuffer driver in DTB");
 
 
     // Set up power

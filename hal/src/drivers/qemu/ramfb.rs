@@ -6,11 +6,9 @@ use core::{cell::UnsafeCell, mem::size_of};
 use crate::driver_traits::framebuffer::FramebufferError::{DestinationOutOfBounds, DimensionsOverflow, SourceTooSmall};
 use crate::drivers::qemu::fw_cfg::FwCfg;
 use crate::services::sync::StaticCell;
-use crate::{
-    Framebuffer, FramebufferError,
-    register_framebuffer_driver,
-};
-use crate::driver_traits::driver::Driver;
+use crate::{register_driver, Framebuffer, FramebufferError};
+use crate::driver_traits::driver::{Driver, DriverProbeError};
+use crate::services::dtb::Dtb;
 
 const RAMFB_FILE: &str = "etc/ramfb";
 const XRGB8888: u32 = 0x3432_5258;
@@ -51,13 +49,13 @@ struct RamFb {
 unsafe impl Sync for RamFb {}
 
 impl RamFb {
-    fn configure(fw_cfg_base: usize) -> Result<Self, FramebufferError> {
+    fn configure(fw_cfg_base: usize) -> Result<Self, DriverProbeError> {
         // SAFETY: this address came from the validated, identity-mapped DTB.
         let fw_cfg = unsafe { FwCfg::new(fw_cfg_base) };
         let selector = fw_cfg
             .find_file(RAMFB_FILE)
-            .map_err(|_| FramebufferError::InitializationFailed)?
-            .ok_or(FramebufferError::InitializationFailed)?;
+            .map_err(|_| DriverProbeError::InitFailed)?
+            .ok_or(DriverProbeError::InitFailed)?;
         let pixels = DISPLAY_MEMORY.0.get().cast::<u32>();
         let config = RamFbConfig {
             address: (va_to_pa(pixels as usize) as u64).to_be(),
@@ -69,7 +67,7 @@ impl RamFb {
         };
         fw_cfg
             .write_object(selector, &config)
-            .map_err(|_| FramebufferError::InitializationFailed)?;
+            .map_err(|_| DriverProbeError::InitFailed)?;
 
         Ok(Self { pixels })
     }
@@ -125,11 +123,11 @@ impl Framebuffer for RamFb {
     }
 }
 
-fn init_ramfb(fw_cfg_base: usize) -> Result<&'static dyn Framebuffer, FramebufferError> {
+fn init_ramfb(fw_cfg_base: usize, _tree: &Dtb) -> Result<&'static dyn Framebuffer, DriverProbeError> {
     static INSTANCE: StaticCell<RamFb> = StaticCell::uninit();
     let ramfb = RamFb::configure(fw_cfg_base)?;
     let ramfb: &'static RamFb = INSTANCE.get_or_init(|| ramfb);
     Ok(ramfb)
 }
+register_driver!(QEMU_RAMFB, "qemu,fw-cfg-mmio", init_ramfb, Framebuffer);
 
-register_framebuffer_driver!(QEMU_RAMFB, "qemu,fw-cfg-mmio", init_ramfb);

@@ -4,7 +4,7 @@ use crate::services::mmio::Mmio;
 use crate::services::sync::StaticCell;
 use crate::{Serial};
 use crate::register_driver;
-use crate::driver_traits::driver::Driver;
+use crate::driver_traits::driver::{Driver, DriverProbeError};
 
 /// A PL011 UART whose registers are directly mapped into the address space.
 pub struct Pl011Uart {
@@ -51,12 +51,12 @@ impl Serial for Pl011Uart {
     }
 }
 
-fn init_pl011_uart(base: usize, _tree: &crate::services::dtb::Dtb) -> &'static dyn Serial {
+fn init_pl011_uart(base: usize, _tree: &crate::services::dtb::Dtb) -> Result<&'static dyn Serial, DriverProbeError> {
     static INSTANCE: StaticCell<Pl011Uart> = StaticCell::uninit();
-    INSTANCE.get_or_init(|| {
+    Ok(INSTANCE.get_or_init(|| {
         // SAFETY: device-tree addresses are identity mapped during early boot.
         unsafe { Pl011Uart::new(base) }
-    })
+    }))
 }
 
 
