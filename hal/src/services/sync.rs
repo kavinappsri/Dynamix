@@ -56,3 +56,61 @@ impl<T> StaticCell<T> {
         }
     }
 }
+
+/// Minimal spinlock
+///
+/// This is only intended for multi-votr use rn. interrupt support hasn't
+/// been added yet, trying an interrupt in this couls lead to undefined behaviour
+
+pub struct SpinLock<T> {
+    locked: AtomicU8,
+    value: UnsafeCell<T>,
+}
+
+unsafe impl<T: Send> Sync for SpinLock<T> {}
+
+impl<T> SpinLock<T> {
+    pub const fn new(value: T) -> Self {
+        Self {
+            locked: AtomicU8::new(0),
+            value: UnsafeCell::new(value),
+        }
+    }
+
+    pub fn lock(&self) -> SpinLockGuard<'_, T> {
+        while self
+            .locked
+            .compare_exchange_weak(0, 1, Ordering::Acquire, Ordering::Relaxed)
+            .is_err() {
+            while self.locked.load(Ordering::Relaxed) != 0 {
+                core::hint::spin_loop();
+            }
+        }
+        SpinLockGuard { lock:self }
+    }
+}
+
+pub struct SpinLockGuard<'a, T> {
+    lock: &'a SpinLock<T>,
+}
+
+impl<'a, T> core::ops::Deref for SpinLockGuard<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: holding the gaurd means we hold
+        // the lock, so we get access to the value
+        unsafe { &*self.lock.value.get() }
+    }
+}
+
+impl<'a, T> core::ops::DerefMut for SpinLockGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        unsafe { &mut *self.lock.value.get() }
+    }
+}
+
+impl<'a, T> Drop for SpinLockGuard<'a, T> {
+    fn drop(&mut self) {
+        self.lock.locked.store(0, Ordering::Release);
+    }
+}

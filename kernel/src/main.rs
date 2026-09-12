@@ -19,6 +19,12 @@ use core::panic::PanicInfo;
 use hal::services::dtb::Dtb;
 use hal::{active_serial};
 use hal::driver_traits::{serial, framebuffer};
+use hal::services::pmm::PmmError;
+
+unsafe extern "C" {
+    static _kernel_vma_start: u8;
+    static _kernel_vma_end: u8;
+}
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -83,6 +89,29 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
         Err(_) => panic!(),
     };
 
+    //set up allocator
+    let (ram_base, ram_size) = dtb
+        .find_node("memory")
+        .and_then(|node| node.reg())
+        .map(|(base, size)| (base as usize, size as usize))
+        .expect("No usable memory node in DTB");
+
+    let kernel_start = hal::services::mmu::va_to_pa(unsafe { &_kernel_vma_start as *const u8 as usize });
+    let kernel_end = hal::services::mmu::va_to_pa(unsafe { &_kernel_vma_end as *const u8 as usize });
+
+    let reserved = [
+        hal::services::pmm::ReservedRange {
+            start: kernel_start,
+            end: kernel_end,
+        },
+        hal::services::pmm::ReservedRange {
+            start: dtb_ptr,
+            end: dtb_ptr + DTB_MAP_WINDOW,
+        },
+    ];
+
+    hal::services::pmm::init(ram_base, ram_size, &reserved).expect("Physical memory manager init failed");
+
     // Set up UART & Console
     let uart = serial::probe_serial(&dtb).expect("No compatible serial driver in DTB");
     let mut console = Console::new(uart);
@@ -139,7 +168,7 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
         console.writeln("");
 
         match &command_buffer[..length] {
-            b"shutdown" => {
+            b"shut" => {
                 console.writeln("Shutting down");
                 hal::services::power::system_off();
             }
@@ -178,8 +207,44 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
 
                 hal::services::power::system_off();
             }
-            b"kavin" => {
-                console.writeln("Kavin is always better than gootam");
+            b"pmm-stats" => {
+                let stats = hal::services::pmm::stats();
+                match stats {
+                    Err(e) => {
+                        console.writeln("ERROR!");
+                        console.write("PmmError::");
+                        match e {
+                            PmmError::AlreadyInitialized => {console.writeln("Already initialized");}
+                            PmmError::NotReady => {console.writeln("Not ready");}
+                            PmmError::ReservedRegionOutOfRange => {console.writeln("Reserved region out of range");}
+                            PmmError::MappingFailed(_) => {console.writeln("MappingFailed");}
+                            PmmError::OrderTooLarge => {console.writeln("Order too large");}
+                            PmmError::TooManyReservedRanges => {console.writeln("TooMany reserved ranges");}
+                            PmmError::InvalidFree => {console.writeln("Invalid free");}
+                        }
+                    }
+                    Ok((free, total)) => {
+
+                        fn usize_to_str(mut num: usize, buf: &mut [u8; 20]) -> &str {
+                            if num == 0 { return "0"; }
+                            let mut i = 20;
+                            while num > 0 {
+                                i -= 1;
+                                buf[i] = b'0' + (num % 10) as u8;
+                                num /= 10;
+                            }
+                            core::str::from_utf8(&buf[i..]).unwrap()
+                        }
+
+                        let mut buf = [0u8;20];
+
+                        console.writeln("Pmm stats:");
+                        console.write("free frames: ");
+                        console.writeln(usize_to_str(free, &mut buf));
+                        console.write("total frames: ");
+                        console.writeln(usize_to_str(total, &mut buf));
+                    }
+                }
             }
             _ => console.writeln("Unrecognized Command"),
         }

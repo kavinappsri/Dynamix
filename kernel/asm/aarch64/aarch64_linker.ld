@@ -16,7 +16,7 @@ SECTIONS
 
     .text.boot : AT(NOMINAL_LMA)
     {
-        kernel_lma_start = LOADADDR(.text.boot);
+        _kernel_lma_start = LOADADDR(.text.boot);
         KEEP(*(.text.boot));
     }
 
