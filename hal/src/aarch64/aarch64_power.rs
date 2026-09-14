@@ -44,6 +44,6 @@ pub fn system_off() {
                 );
             }
         }
-        _ => return,
+        _ => (),
     }
 }

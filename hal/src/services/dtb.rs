@@ -77,12 +77,7 @@ impl<'a> Dtb<'a> {
     /// A match is performed against the NUL-separated `compatible` property,
     /// such as `"arm,pl011"`.
     pub fn find_compatible(&self, compatible: &str) -> Option<Node<'a>> {
-        for node in self.nodes() {
-            if node.is_compatible(compatible) {
-                return Some(node);
-            }
-        }
-        None
+        self.nodes().find(|node| node.is_compatible(compatible))
     }
 
     /// Finds the first node whose name contains `name_part`.
@@ -90,12 +85,7 @@ impl<'a> Dtb<'a> {
     /// This is a substring search, not a path lookup; use it only when that
     /// looser matching behavior is intended.
     pub fn find_node(&self, name_part: &str) -> Option<Node<'a>> {
-        for node in self.nodes() {
-            if node.name().contains(name_part) {
-                return Some(node);
-            }
-        }
-        None
+        self.nodes().find(|&node| node.name().contains(name_part))
     }
     
     /// Finds the address of the first node compatible with `compatible`

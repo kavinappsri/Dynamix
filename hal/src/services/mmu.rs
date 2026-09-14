@@ -82,3 +82,35 @@ pub fn va_to_pa(addr: usize) -> usize {
         compile_error!("Unsupported architecture");
     }
 }
+
+/// Changes an already mapped range to normal non cacheable attributes
+pub fn remap_normal_nc(phys: usize, len: usize) -> Result<(), MmuError> {
+    #[cfg(target_arch = "aarch64")]
+    {
+        crate::aarch64::aarch64_mmu::remap_normal_nc(phys as u64, len as u64)
+    }
+    #[cfg(target_arch = "arm")]
+    {
+        crate::armv7::armv7_mmu::remap_normal_nc(phys as u32, len as u32)
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "arm")))]
+    {
+        compile_error!("Unsupported architecture");
+    }
+}
+
+/// Changes an already mapped range to normal attribute
+pub fn remap_normal(phys: usize, len: usize) -> Result<(), MmuError> {
+    #[cfg(target_arch = "aarch64")]
+    {
+        crate::aarch64::aarch64_mmu::remap_normal(phys as u64, len as u64)
+    }
+    #[cfg(target_arch = "arm")]
+    {
+        crate::armv7::armv7_mmu::remap_normal(phys as u32, len as u32)
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "arm")))]
+    {
+        compile_error!("Unsupported architecture");
+    }
+}

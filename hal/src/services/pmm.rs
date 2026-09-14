@@ -1,14 +1,9 @@
 //! Physical memory manager
-//!
-//! this is currently a list allocator, it hands out ram pages
-//! to the kernel and drivers
-
-
 
 use crate::services::mmu::{self, MmuError};
 use crate::services::sync::SpinLock;
 
-/// Frame size in bytes (4KB).
+/// Frame size in bytes
 pub const FRAME_SIZE: usize = 4096;
 const FRAME_SHIFT: usize = 12;
 
@@ -16,17 +11,16 @@ const FRAME_SHIFT: usize = 12;
 pub const MAX_ORDER: usize = 10;
 
 /// Maximum number of caller-supplied [`ReservedRange`]s [`init`] accepts
-/// no heap for a vec.
 pub const MAX_RESERVED_RANGES: usize = 15;
 
-/// A physical frame address. must be [`FRAME_SIZE`]-aligned.
+/// A physical frame address
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PhysFrame(usize);
 
 impl PhysFrame {
     #[inline]
     pub const fn from_addr(addr: usize) -> Self {
-        debug_assert!(addr % FRAME_SIZE == 0);
+        debug_assert!(addr.is_multiple_of(FRAME_SIZE));
         Self(addr)
     }
 
@@ -70,14 +64,9 @@ enum FrameState {
 }
 
 struct Pmm {
-    /// One entry per frame in the managed range, indexed by
-    /// `frame.index() - base_index`.
     frame_state: &'static mut [FrameState],
-    /// Physical address corresponding to `frame_state[0]`.
     base_addr: usize,
-    /// Physical frame index corresponding to `frame_state[0]`.
     base_index: usize,
-    /// Head of each order's free list.
     free_lists: [Option<PhysFrame>; MAX_ORDER + 1],
     frames_free: usize,
     frames_total: usize,
@@ -86,11 +75,6 @@ struct Pmm {
 impl Pmm {
     /// Physical address of the free-list link word stored in `frame`'s
     /// first `size_of::<Option<PhysFrame>>()` bytes.
-    ///
-    /// # Safety
-    /// `frame` must currently be identity-mapped and not concurrently
-    /// aliased (i.e. the caller holds the PMM lock and `frame` is not
-    /// handed out to anyone else).
     unsafe fn node_ptr(frame: PhysFrame) -> *mut Option<PhysFrame> {
         frame.addr() as *mut Option<PhysFrame>
     }
@@ -109,8 +93,8 @@ impl Pmm {
     }
 
     fn push_free(&mut self, order: usize, frame: PhysFrame) {
-        // SAFETY: frame is RAM under our management, and we
-        // hold `&mut self` (i.e. the PMM lock), so nothing else can change it
+        // SAFETY: frame is identity-mapped RAM under our management, and we
+        // hold `&mut self` (i.e. the PMM lock), so no one else touches it.
         unsafe { core::ptr::write(Self::node_ptr(frame), self.free_lists[order]) };
         self.free_lists[order] = Some(frame);
         *self.state_mut(frame) = FrameState::Free(order as u8);
@@ -120,7 +104,7 @@ impl Pmm {
         }
     }
 
-    /// Removes and returns the head of `free_lists[order]`, if any.
+    /// Removes and returns the head of `free_lists[order]`
     fn pop_free(&mut self, order: usize) -> Option<PhysFrame> {
         let head = self.free_lists[order]?;
         // SAFETY: head is a frame we ourselves linked in `push_free`.
@@ -129,7 +113,7 @@ impl Pmm {
         Some(head)
     }
 
-    /// Removes a specific frame from `free_lists[order]`.
+    /// Removes a specific frame from `free_lists[order]`
     fn remove_free(&mut self, order: usize, target: PhysFrame) -> bool {
         let mut cursor = self.free_lists[order];
         let mut prev: Option<PhysFrame> = None;
@@ -151,7 +135,7 @@ impl Pmm {
         false
     }
 
-    /// Returns `frame`'s buddy at `order`
+
     fn buddy_of(&self, frame: PhysFrame, order: usize) -> PhysFrame {
         let block_bytes = FRAME_SIZE << order;
         let offset = frame.addr() - self.base_addr;
@@ -160,7 +144,7 @@ impl Pmm {
     }
 
     fn alloc(&mut self, order: usize) -> Option<PhysFrame> {
-        // Find the smallest available order >= order with a free block.
+        // Find the smallest available order >= `order` with a free block.
         let mut found_order = None;
         for o in order..=MAX_ORDER {
             if self.free_lists[o].is_some() {
@@ -171,9 +155,10 @@ impl Pmm {
         let found_order = found_order?;
         let block = self.pop_free(found_order)?;
 
-        // Split the block down to the requested order
+        // Split the block down to the requested order, pushing the unused
+        // upper halves back onto their respective free lists.
         let mut cur_order = found_order;
-        let mut cur_frame = block;
+        let cur_frame = block;
         while cur_order > order {
             cur_order -= 1;
             let half_bytes = FRAME_SIZE << cur_order;
@@ -191,17 +176,23 @@ impl Pmm {
         Some(cur_frame)
     }
 
-    fn free(&mut self, frame: PhysFrame, order: usize) -> Result<(), PmmError> {
+    /// Checks that `frame`/`order` is eligible to be freed
+    fn validate_free(&self, frame: PhysFrame, order: usize) -> Result<(), PmmError> {
         if order > MAX_ORDER {
             return Err(PmmError::OrderTooLarge);
         }
         let offset = frame.addr().wrapping_sub(self.base_addr);
-        if !self.in_range(frame) || offset % (FRAME_SIZE << order) != 0 {
+        if !self.in_range(frame) || !offset.is_multiple_of(FRAME_SIZE << order)  {
             return Err(PmmError::InvalidFree);
         }
         if matches!(self.state(frame), FrameState::Free(_) | FrameState::FreeTail) {
             return Err(PmmError::InvalidFree);
         }
+        Ok(())
+    }
+
+    fn free(&mut self, frame: PhysFrame, order: usize) -> Result<(), PmmError> {
+        self.validate_free(frame, order)?;
 
         let mut cur_order = order;
         let mut cur_frame = frame;
@@ -233,12 +224,15 @@ impl Pmm {
     }
 }
 
-
+// SAFETY: Pmm's only non-Sync-by-default field is the frame_state slice,
+// which is exclusively accessed through the SpinLock below.
 unsafe impl Send for Pmm {}
 
 static PMM: SpinLock<Option<Pmm>> = SpinLock::new(None);
 
-/// Ram excluded from the free-list pool
+/// A physically contiguous, page-aligned RAM range excluded from the free
+/// pool -- the kernel image, boot/device page tables, the DTB blob, or the
+/// PMM's own metadata array.
 #[derive(Clone, Copy)]
 pub struct ReservedRange {
     pub start: usize,
@@ -260,7 +254,6 @@ pub fn init(ram_base: usize, ram_size: usize, reserved: &[ReservedRange]) -> Res
 
     mmu::map_normal(ram_base, ram_end - ram_base).map_err(PmmError::MappingFailed)?;
 
-    // Metadata: one FrameState byte per frame in the managed range
     let frame_count = (ram_end - ram_base) / FRAME_SIZE;
     let highest_reserved_end = reserved.iter().map(|r| r.end).max().unwrap_or(ram_base);
     let meta_start = align_up(highest_reserved_end.max(ram_base), 8);
@@ -335,12 +328,6 @@ fn free_unreserved_ranges(pmm: &mut Pmm, ram_base: usize, ram_end: usize, reserv
             continue;
         }
 
-        // Insert the largest aligned power-of-two block(s) covering
-        // [cursor, run_end), largest-order-first, buddy style. Alignment is
-        // measured relative to `ram_base` (== `pmm.base_addr`), matching
-        // the offset-based buddy math in `Pmm::buddy_of` -- a block's raw
-        // address need not itself be power-of-two aligned, only its offset
-        // from the region base.
         let mut addr = cursor;
         while addr < run_end {
             let remaining = run_end - addr;
@@ -365,14 +352,6 @@ fn free_unreserved_ranges(pmm: &mut Pmm, ram_base: usize, ram_end: usize, reserv
 }
 
 /// Allocates `2^order` contiguous, [`FRAME_SIZE`]-aligned frames.
-///
-/// Returns the base [`PhysFrame`] of the block, or `None` if no block of
-/// that order is currently available (RAM is fragmented or exhausted at
-/// that size).
-///
-/// # Errors
-/// Returns [`PmmError::NotReady`] if called before [`init`], or
-/// [`PmmError::OrderTooLarge`] if `order > `[`MAX_ORDER`].
 pub fn alloc_frames(order: usize) -> Result<Option<PhysFrame>, PmmError> {
     if order > MAX_ORDER {
         return Err(PmmError::OrderTooLarge);
@@ -382,29 +361,29 @@ pub fn alloc_frames(order: usize) -> Result<Option<PhysFrame>, PmmError> {
     Ok(pmm.alloc(order))
 }
 
-/// Allocates a single [`FRAME_SIZE`] frame, variation of
-/// [`pmm::alloc_frames()`]
+/// Allocates a single [`FRAME_SIZE`] frame. Convenience for `alloc_frames(0)`.
 pub fn alloc_frame() -> Result<Option<PhysFrame>, PmmError> {
     alloc_frames(0)
 }
 
 /// Frees a block of `2^order` frames previously returned by
 /// [`alloc_frames`] with the same `order`.
-///
-/// Coalesces with the buddy block(s) where possible, up to [`MAX_ORDER`].
-///
-/// # Errors
-/// Returns [`PmmError::NotReady`] before [`init`], [`PmmError::OrderTooLarge`]
-/// if `order > `[`MAX_ORDER`], or [`PmmError::InvalidFree`] if `frame` is
-/// misaligned for `order`, out of the managed range, or already free
-/// (double-free).
 pub fn free_frames(frame: PhysFrame, order: usize) -> Result<(), PmmError> {
+    {
+        let guard = PMM.lock();
+        let pmm = guard.as_ref().ok_or(PmmError::NotReady)?;
+        pmm.validate_free(frame, order)?;
+    }
+
+    let len = FRAME_SIZE << order;
+    mmu::remap_normal(frame.addr(), len).map_err(PmmError::MappingFailed)?;
+
     let mut guard = PMM.lock();
     let pmm = guard.as_mut().ok_or(PmmError::NotReady)?;
     pmm.free(frame, order)
 }
 
-/// Frees a single frame, variation of [`pmm::free_frames()`]
+/// Frees a single frame previously returned by [`alloc_frame`].
 pub fn free_frame(frame: PhysFrame) -> Result<(), PmmError> {
     free_frames(frame, 0)
 }

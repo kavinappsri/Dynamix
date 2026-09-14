@@ -7,17 +7,18 @@
 //! - Panel timings are a fixed built-in const
 //! - No VOP-internal IOMMU setup
 
-use core::cell::UnsafeCell;
+
 use crate::driver_traits::clocks::ClockController;
 use crate::driver_traits::driver::DriverProbeError;
 use crate::driver_traits::framebuffer::{FramebufferError, Framebuffer};
 use crate::services::mmio::Mmio;
-use crate::services::mmu::va_to_pa;
 use crate::drivers::rockchip::rk312x_cru::Rk3126Clock;
 use crate::register_driver;
 use crate::services::sync::StaticCell;
 use crate::driver_traits::driver::Driver;
 use crate::services::dtb::Dtb;
+use crate::services::pmm;
+use crate::services::mmu;
 // --- Register Offsets ---
 
 const SYS_CTRL: usize = 0x00;
@@ -43,12 +44,7 @@ const REG_CFG_DONE: usize = 0x90;
 const M_WIN0_EN: u32 = 1 << 0;
 const M_WIN0_FORMAT: u32 = 0x7 << 3;
 const M_AUTO_GATING_EN: u32 = 1 << 31;
-// VOP_FORMAT_ARGB888 == 0, this is a no-op bit pattern, kept named and
-// written explicitly so the format
-// selection isn't dependent on POR defaults. Framebuffer::fill and
-// blit_xrgb8888 write XRGB8888 (top byte ignored by convention); the VOP
-// hardware format for that byte layout is the same ARGB888 mode, made
-// effectively-X by disabling M_WIN0_ALPHA_EN in ALPHA_CTRL below.
+// VOP_FORMAT_ARGB888 == 0, this is a no-op bit pattern=
 const V_WIN0_FORMAT_ARGB888: u32 = 0 << 3;
 
 // --- DSP_CTRL0 bits ---
@@ -120,16 +116,21 @@ impl Mode {
 /// grow this to match.
 const PIXEL_COUNT: usize = (DEFAULT_MODE.xres * DEFAULT_MODE.yres) as usize;
 
-#[repr(align(4096))]
-struct DisplayMemory(UnsafeCell<[u32; PIXEL_COUNT]>);
+const FRAMEBUFFER_BYTES: usize = PIXEL_COUNT * size_of::<u32>();
 
-unsafe impl Sync for DisplayMemory {}
+/// Smallest buddy order whose `2^order` frames cover [`FRAMEBUFFER_BYTES`]
+const fn frames_needed_order(bytes: usize) -> usize {
+    let frames = bytes.div_ceil(pmm::FRAME_SIZE);
+    (usize::BITS - (frames - 1).leading_zeros()) as usize
+}
 
-static DISPLAY_MEMORY: DisplayMemory = DisplayMemory(UnsafeCell::new([0; PIXEL_COUNT]));
+const FRAMEBUFFER_ORDER: usize = frames_needed_order(FRAMEBUFFER_BYTES);
+
 
 struct Rk312xVop {
     regs: Mmio,
     pixels: *mut u32,
+    framebuffer_pa: usize,
     mode: Mode,
 }
 
@@ -168,9 +169,26 @@ impl Rk312xVop {
         // SAFETY: `vop_base` came from the validated, mapped device tree
         // via `probe_framebuffer`.
         let regs = unsafe { Mmio::new(vop_base) };
-        let pixels = DISPLAY_MEMORY.0.get().cast::<u32>();
 
-        let vop = Self { regs, pixels, mode };
+        let frame = pmm::alloc_frames(FRAMEBUFFER_ORDER)
+            .map_err(|_| DriverProbeError::MappingFailed)?
+            .ok_or(DriverProbeError::MappingFailed)?;
+
+        let framebuffer_pa = frame.addr();
+        let len = pmm::FRAME_SIZE << FRAMEBUFFER_ORDER;
+
+        if mmu::remap_normal_nc(framebuffer_pa, len).is_err() {
+            // remap failed
+            let _ = pmm::free_frames(frame, FRAMEBUFFER_ORDER);
+            return Err(DriverProbeError::MappingFailed);
+        }
+
+        let pixels = framebuffer_pa as *mut u32;
+        unsafe { core::ptr::write_bytes(pixels, 0, PIXEL_COUNT) };
+
+
+        let vop = Self { regs, pixels ,framebuffer_pa, mode };
+
         vop.program_registers();
         Ok(vop)
     }
@@ -244,7 +262,7 @@ impl Rk312xVop {
         self.regs.write32(WIN0_SCL_FACTOR_CBR, 0x1000 | (0x1000 << 16));
 
 
-        let framebuffer_pa = va_to_pa(self.pixels as usize);
+        let framebuffer_pa = self.framebuffer_pa;
         self.regs.write32(WIN0_YRGB_MST, framebuffer_pa as u32);
         self.regs.write32(WIN0_CBR_MST, 0);
 

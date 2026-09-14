@@ -126,7 +126,7 @@ fn map_range(
 
         let remaining = len - offset;
         let can_use_block =
-            (va % L2_BLOCK_SIZE == 0) && (pa % L2_BLOCK_SIZE == 0) && (remaining >= L2_BLOCK_SIZE);
+            (va.is_multiple_of(L2_BLOCK_SIZE)) && (pa.is_multiple_of(L2_BLOCK_SIZE)) && (remaining >= L2_BLOCK_SIZE);
 
         if can_use_block {
             l2_table.0[l2_idx] = pa | attrs;
@@ -215,20 +215,19 @@ pub fn map_normal_nc(phys: u64, len: u64) -> Result<(), MmuError> {
 }
 
 /// Identity-maps `len` bytes of device (MMIO) memory starting at the
-/// physical address `phys`, so that ordinary loads/stores to that
-/// range succeed once the MMU is enabled.
-///
-/// Device MMIO is identity-mapped (VA == PA) into TTBR0's range,
-///  Call this with a (base, size) pair discovered from the boot DTB before touching the
-/// corresponding device's registers; a device access before its
-/// `map_device` call takes a translation fault.
-///
-/// # Errors
-/// Returns [`MmuError::MmuNotReady`] if called before [`init`], or
-/// [`MmuError::OutOfTableSpace`] if the reserved `.devicetables`
-/// region is exhausted.
+/// physical address `phys`
 pub fn map_device(phys: u64, len: u64) -> Result<(), MmuError> {
     map_impl(phys, len, MemType::Device)
+}
+
+/// Changes an already mapped area to normal, non cacheable memory
+pub fn remap_normal_nc(phys: u64, len: u64) -> Result<(), MmuError> {
+    remap_impl(phys, len, MemType::NormalNonCacheable)
+}
+
+/// Changes an already mapped area to normal memory
+pub fn remap_normal(phys: u64, len: u64) -> Result<(), MmuError> {
+    remap_impl(phys, len, MemType::Normal)
 }
 
 fn map_impl(phys: u64, len: u64, mem_type: MemType) -> Result<(), MmuError> {
@@ -244,28 +243,149 @@ fn map_impl(phys: u64, len: u64, mem_type: MemType) -> Result<(), MmuError> {
     let next = NEXT_FREE_TABLE.load(Ordering::Relaxed) as *mut Table;
     let end = TABLE_REGION_END.load(Ordering::Relaxed) as *mut Table;
 
-    let result = unsafe {
-        let mut alloc = TableBumpAllocator { next, end };
+    let (map_result, new_next) = unsafe {
+        let mut alloc = TableBumpAllocator {next, end};
         let ttbr0_root = &mut *ttbr0_root_ptr;
-        map_range(ttbr0_root, &mut alloc, aligned_phys, aligned_phys, aligned_len, mem_type).map(|()| alloc.next)
-    };
 
-    let new_next = match result {
-        Ok(next) => next,
-        Err(e) => return Err(e),
+        let result = map_range(ttbr0_root, &mut alloc, aligned_phys, aligned_phys, aligned_len, mem_type);
+        (result, alloc.next)
     };
 
     NEXT_FREE_TABLE.store(new_next as u64, Ordering::Relaxed);
 
+    invalidate_range(aligned_phys, aligned_len);
+    map_result?;
+
+    Ok(())
+}
+
+fn remap_impl(phys: u64, len: u64, mem_type: MemType) -> Result<(), MmuError> {
+    if MMU_STATE_READY.load(Ordering::Acquire) != 1 {
+        return Err(MmuError::MmuNotReady);
+    }
+
+    let aligned_phys = phys & !0xFFF;
+    let align_adjust = phys - aligned_phys;
+    let aligned_len = (len + align_adjust + 0xFFF) & !0xFFF;
+
+    let ttbr0_root_ptr = TTBR0_ROOT.load(Ordering::Relaxed) as *mut Table;
+    let next = NEXT_FREE_TABLE.load(Ordering::Relaxed) as *mut Table;
+    let end = TABLE_REGION_END.load(Ordering::Relaxed) as *mut Table;
+
+    let (remap_result, new_next) = unsafe {
+        let mut alloc = TableBumpAllocator {next, end};
+        let ttbr0_root = &mut *ttbr0_root_ptr;
+        let result = remap_range(ttbr0_root, &mut alloc, aligned_phys, aligned_len, mem_type);
+        (result, alloc.next)
+    };
+
+    NEXT_FREE_TABLE.store(new_next as u64, Ordering::Relaxed);
+
+    invalidate_range(aligned_phys, aligned_len);
+    remap_result?;
+
+    Ok(())
+}
+
+/// Walks `[start, start + len)` (identity VA == PA, matching `map_range`),
+/// updating attribute bits on existing valid entries only.
+fn remap_range(root: &mut Table, alloc: &mut TableBumpAllocator, start: u64, len: u64, mem_type: MemType, ) -> Result<(), MmuError> {
+    let new_attr_bits = mem_type.descriptor_bits();
+
+    const ATTR_MASK: u64 = (0b111 << 2) | DESC_SH_INNER;
+    let mut offset = 0u64;
+
+    while offset < len {
+        let va = start + offset;
+        let l1_idx = ((va >> 30) & 0x1FF) as usize;
+        let l2_idx = ((va >> 21) & 0x1FF) as usize;
+        let l2_table = existing_table_at(root, l1_idx).ok_or(MmuError::MmuNotReady)?;
+        let l2_entry = l2_table.0[l2_idx];
+
+        if l2_entry & DESC_VALID == 0 {
+            return Err(MmuError::MmuNotReady);
+        }
+
+        let is_block = l2_entry & DESC_TABLE_OR_PAGE == 0;
+
+        if is_block {
+            let block_pa = l2_entry & 0x0000_FFFF_FFFF_F000;
+            let block_va = va & !(L2_BLOCK_SIZE - 1);
+            let remaining_in_block = L2_BLOCK_SIZE - (va - block_va);
+            let covers_whole_block = block_va == va && len - offset >= L2_BLOCK_SIZE;
+
+            if covers_whole_block {
+                l2_table.0[l2_idx] = (l2_entry & !ATTR_MASK) | new_attr_bits;
+                offset += L2_BLOCK_SIZE;
+                continue;
+            }
+
+            // Partial coverage: demote this block to an L3 table
+            let old_attr_bits = l2_entry & ATTR_MASK;
+            let l3_table = alloc.alloc_table().ok_or(MmuError::OutOfTableSpace)?;
+
+            unsafe {
+                for i in 0..ENTRIES_PER_TABLE {
+                    let page_pa = block_pa + (i as u64) * L3_PAGE_SIZE;
+                    (*l3_table).0[i] = page_pa
+                        | DESC_VALID
+                        | DESC_TABLE_OR_PAGE
+                        | DESC_AF
+                        | old_attr_bits;
+                }
+            }
+            l2_table.0[l2_idx] = va_to_pa(l3_table as u64) | DESC_VALID | DESC_TABLE_OR_PAGE;
+
+            let span_in_block = remaining_in_block.min(len - offset);
+            let l3_table = unsafe { &mut *l3_table };
+            let mut inner_offset = 0u64;
+            while inner_offset < span_in_block {
+                let inner_va = va + inner_offset;
+                let l3_idx = ((inner_va >> 12) & 0x1FF) as usize;
+                l3_table.0[l3_idx] = (l3_table.0[l3_idx] & !ATTR_MASK) | new_attr_bits;
+                inner_offset += L3_PAGE_SIZE;
+            }
+            offset += span_in_block;
+
+        } else {
+            // Already a table
+            let table_ptr = (l2_entry & 0x0000_FFFF_FFFF_F000) as *mut Table;
+            let l3_table = unsafe { &mut *table_ptr };
+            let l3_idx = ((va >> 12) & 0x1FF) as usize;
+            let l3_entry = l3_table.0[l3_idx];
+            if l3_entry & DESC_VALID == 0 {
+                return Err(MmuError::MmuNotReady);
+            }
+            l3_table.0[l3_idx] = (l3_entry & !ATTR_MASK) | new_attr_bits;
+            offset += L3_PAGE_SIZE;
+        }
+    }
+
+    Ok(())
+}
+
+/// Returns the next-level table pointed to by `parent.0[idx]` if it is
+/// already a valid table descriptor, or `None` if that entry is invalid.
+fn existing_table_at<'a>(parent: &Table, idx: usize) -> Option<&'a mut Table> {
+    let entry = parent.0[idx];
+    if entry & DESC_VALID == 0 {
+        return None;
+    }
+    let table_ptr = (entry & 0x0000_FFFF_FFFF_F000) as *mut Table;
+    Some(unsafe { &mut *table_ptr })
+}
+
+
+
+/// Invalidates TLB entries for every 4KB page in `[start, start + len)`.
+fn invalidate_range(start: u64, len: u64) {
     unsafe {
-        let mut va = aligned_phys;
-        let mapped_end = aligned_phys + aligned_len;
-        while va < mapped_end {
+        let mut va = start;
+        let end = start + len;
+        while va < end {
             asm!("tlbi vaae1is, {}", in(reg) va >> 12, options(nostack));
             va += L3_PAGE_SIZE;
         }
         asm!("dsb ish", "isb", options(nostack));
     }
-
-    Ok(())
 }

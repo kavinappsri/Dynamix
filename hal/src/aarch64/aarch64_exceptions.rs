@@ -64,7 +64,7 @@ const KINDS: [&str; 4] = ["Synchronous", "IRQ", "FIQ", "SError"];
 ///
 /// This handler itself does not panic, but it never returns.
 pub extern "C" fn rust_exception_handler(ctx: &ExceptionContext, source: usize, kind: usize) {
-    let Some(uart) = active_serial() else { loop {} };
+    let Some(uart) = active_serial() else { loop {core::hint::spin_loop()} };
 
     uart.write_str("\n=== DYNAMIX STAGE FRIGHT ===\n");
     uart.write_str("Triggered by the exception vector table\n");
@@ -88,7 +88,7 @@ pub extern "C" fn rust_exception_handler(ctx: &ExceptionContext, source: usize, 
 
     uart.write_str("\nSystem halted.\n");
 
-    loop {}
+    loop {core::hint::spin_loop()}
 }
 
 fn print_hex(uart: &dyn Serial, label: &str, val: u64) {

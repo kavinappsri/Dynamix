@@ -61,7 +61,6 @@ impl<T> StaticCell<T> {
 ///
 /// This is only intended for multi-votr use rn. interrupt support hasn't
 /// been added yet, trying an interrupt in this couls lead to undefined behaviour
-
 pub struct SpinLock<T> {
     locked: AtomicU8,
     value: UnsafeCell<T>,

@@ -30,6 +30,7 @@ const fn clkgate_con(index: usize) -> usize {
 /// mux from); `APLL`/`DPLL` are recorded for future drivers
 #[allow(dead_code)]
 mod pll_base {
+    #[allow(clippy::erasing_op)]
     pub const APLL: usize = 0 * 0x10;
     pub const DPLL: usize = 1 * 0x10;
     pub const CPLL: usize = 2 * 0x10;
@@ -192,7 +193,7 @@ impl Rk3126Cru {
 
             // 8-bit divider field means the true divisor is div_field + 1,
             // in [1, 256].
-            let divisor = (parent_hz / hz).max(1).min(256);
+            let divisor = (parent_hz / hz).clamp(1, 256);
             let achieved_hz = parent_hz / divisor;
 
             let is_better = match best {
