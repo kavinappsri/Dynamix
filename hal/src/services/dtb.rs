@@ -104,6 +104,15 @@ impl<'a> Dtb<'a> {
             curr_offset: self.struct_off,
         }
     }
+
+    /// Finds the node that matches the given `phandle`
+    pub fn find_phandle(&self, phandle: u32) -> Option<Node<'a>> {
+        if phandle == 0 || phandle == u32::MAX {
+            return None;
+        }
+
+        self.nodes().find(|node| node.phandle() == Some(phandle))
+    }
 }
 
 /// A node in the Device Tree (for example, `/soc/uart@9000000`).
@@ -204,6 +213,16 @@ impl<'a> Node<'a> {
         } else {
             None
         }
+    }
+
+    /// Returns the node's phandle, if it has one
+    ///
+    /// This method checks both the standard `phandle` and
+    /// the legacy `linux,phandle`. Returns result as a `u32`
+    pub fn phandle(&self) -> Option<u32> {
+        self.property("phandle")
+            .or_else(|| self.property("linux,phandle"))
+            .and_then(|prop| prop.as_u32())
     }
 }
 

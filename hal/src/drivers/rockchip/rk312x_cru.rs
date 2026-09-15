@@ -26,8 +26,8 @@ const fn clkgate_con(index: usize) -> usize {
     index * 0x4 + 0xd0
 }
 
-/// Base offsets of each PLL's four-word `CON` block. Only `CPLL`/`GPLL` are read today (the only PLLs `DCLK_VOP` can
-/// mux from); `APLL`/`DPLL` are recorded for future drivers
+/// Base offsets of each PLL's four-word `CON` block. Only `CPLL`/`GPLL` are currently
+/// `APLL`/`DPLL` are recorded for future drivers
 #[allow(dead_code)]
 mod pll_base {
     #[allow(clippy::erasing_op)]
@@ -60,7 +60,7 @@ mod dclk_vop {
     pub const GATE_BIT: u32 = 1;
 }
 
-/// `mux_sclk_vop_src_p = { "cpll", "gpll", "gpll_div2", "gpll_div3" }` --
+/// `mux_sclk_vop_src_p = { "cpll", "gpll", "gpll_div2", "gpll_div3" }`
 /// the parents selectable for `DCLK_VOP` (and `SCLK_VOP`) in mux order.
 #[derive(Clone, Copy)]
 enum VopClockParent {
@@ -71,7 +71,7 @@ enum VopClockParent {
 }
 
 /// `ACLK_LCDC0`: `CLKGATE_CON(6)` bit 0. Derived from `aclk_vio0`, which the
-/// VIO power-domain bus divider (not this driver) controls; we only gate it.
+/// VIO power-domain bus divider (not this driver) controls
 const ACLK_LCDC0_GATE_CON: usize = clkgate_con(6);
 const ACLK_LCDC0_GATE_BIT: u32 = 0;
 
@@ -79,7 +79,7 @@ const ACLK_LCDC0_GATE_BIT: u32 = 0;
 const HCLK_LCDC0_GATE_CON: usize = clkgate_con(6);
 const HCLK_LCDC0_GATE_BIT: u32 = 1;
 
-/// Clock identifiers this driver recognizes, passed to [`ClockController`]
+/// Clock identifiers this driver currently recognizes
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum Rk3126Clock {
@@ -118,8 +118,7 @@ impl Rk3126Cru {
     }
 
     /// Performs a hiword-masked write: updates only the bits covered by
-    /// `mask` (already positioned at `shift`) to `value`, leaving every
-    /// other bit in the register untouched, in one atomic store.
+    /// `mask` (already positioned at `shift`) to `value`
     fn write_masked(&self, offset: usize, shift: u32, mask: u32, value: u32) {
         let field = (value & mask) << shift;
         let write_mask = mask << (shift + 16);
@@ -170,9 +169,7 @@ impl Rk3126Cru {
     }
 
     /// Picks the parent/divider pair for `DCLK_VOP` that reaches closest to
-    /// `hz` without exceeding it, preferring CPLL first (matching the
-    /// reference driver's declared parent order and keeping GPLL free for
-    /// other peripherals that depend on it).
+    /// `hz` without exceeding it, preferring CPLL first
     fn best_dclk_vop_divider(&self, hz: u32) -> Result<(VopClockParent, u32, u32), ClockError> {
         const CANDIDATES: [VopClockParent; 4] = [
             VopClockParent::Cpll,
@@ -279,9 +276,7 @@ impl ClockController for Rk3126Cru {
 
                 Ok(achieved_hz)
             }
-            // ACLK_LCDC0/HCLK_LCDC0 derive from shared bus clocks
-            // (aclk_vio0/hclk_vio) this driver doesn't independently divide;
-            // their rate is whatever that bus is already running at.
+
             Rk3126Clock::AclkLcdc0 | Rk3126Clock::HclkLcdc0 => Err(ClockError::UnreachableRate),
         }
     }
