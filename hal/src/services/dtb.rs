@@ -105,6 +105,14 @@ impl<'a> Dtb<'a> {
         }
     }
 
+    /// Returns the raw device path string assigned to `alias` in the `/aliases` node.
+    pub fn resolve_alias(&self, alias: &str) -> Option<&'a str> {
+        self.nodes()
+            .find(|node| node.name() == "aliases")
+            .and_then(|aliases_node| aliases_node.property(alias))
+            .and_then(|prop| prop.as_str())
+    }
+
     /// Finds the node that matches the given `phandle`
     pub fn find_phandle(&self, phandle: u32) -> Option<Node<'a>> {
         if phandle == 0 || phandle == u32::MAX {
@@ -112,6 +120,27 @@ impl<'a> Dtb<'a> {
         }
 
         self.nodes().find(|node| node.phandle() == Some(phandle))
+    }
+
+    /// Finds a node by its device tree path
+    pub fn find_path(&self, path: &str) -> Option<Node<'a>> {
+        let path = path.trim_end_matches('\0');
+        if path == "/" {
+            return self.nodes().find(|n| n.name() == "/")
+        }
+
+        let target_name = path.rsplit('/').next()?;
+        if target_name.is_empty() {
+            return None;
+        }
+
+        self.nodes().find(|node| node.name() == target_name)
+    }
+
+    /// Finds node by alias
+    pub fn find_alias(&self, alias: &str) -> Option<Node<'a>> {
+        let path = self.resolve_alias(alias)?;
+        self.find_path(path)
     }
 }
 
