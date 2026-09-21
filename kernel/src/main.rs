@@ -121,7 +121,7 @@ pub extern "C" fn rust_main(dtb_ptr: usize) -> ! {
     console.writeln("[+] DTB, UART Found");
 
     // Set up the clocks, if the device has one
-    match hal::driver_traits::clocks::probe_cclocks(&dtb) {
+    match hal::driver_traits::clocks::probe_clocks(&dtb) {
         Ok(_) => console.writeln("[+] Clock controller found"),
         Err(_) => console.writeln("[ ] No compatible clock controller in DTB"),
     }

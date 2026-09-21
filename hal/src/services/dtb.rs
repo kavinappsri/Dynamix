@@ -36,14 +36,13 @@ pub struct Dtb<'a> {
 }
 
 impl<'a> Dtb<'a> {
-    /// Creates a DTB view from a raw physical memory pointer passed by the bootloader.
+    /// Creates a DTB view from a raw physical memory pointer
     ///
     /// # Safety
     /// The caller must ensure `ptr` points to valid, accessible memory containing a DTB.
     /// Its header's total-size field must describe a readable contiguous range.
     ///
     /// # Errors
-    ///
     /// Returns [`DtbError::NullPointer`] for a zero pointer and
     /// [`DtbError::InvalidMagic`] if the header does not contain an FDT magic.
     pub unsafe fn from_ptr(ptr: usize) -> Result<Self, DtbError> {
@@ -73,9 +72,6 @@ impl<'a> Dtb<'a> {
     }
 
     /// Finds the first device node compatible with `compatible`.
-    ///
-    /// A match is performed against the NUL-separated `compatible` property,
-    /// such as `"arm,pl011"`.
     pub fn find_compatible(&self, compatible: &str) -> Option<Node<'a>> {
         self.nodes().find(|node| node.is_compatible(compatible))
     }

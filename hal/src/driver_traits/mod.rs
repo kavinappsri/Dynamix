@@ -4,3 +4,4 @@ pub mod clocks;
 pub mod framebuffer;
 pub mod serial;
 pub mod driver;
+pub mod power_domain;

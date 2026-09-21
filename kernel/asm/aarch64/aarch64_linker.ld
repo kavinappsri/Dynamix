@@ -44,8 +44,12 @@ SECTIONS
         __stop_framebuffer_drivers = .;
 
         __start_clock_drivers = .;
-        KEEP(*(.drivers.clocks))
+        KEEP(*(.drivers.clock))
         __stop_clock_drivers = .;
+
+        __start_power_domain_drivers = .;
+        KEEP(*(.drivers.power_domain))
+        __stop_power_domain_drivers = .;
         __stop_drivers = .;
     }
 

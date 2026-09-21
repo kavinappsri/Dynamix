@@ -45,6 +45,9 @@ macro_rules! register_driver {
     ($name:ident, $compat:literal, $init_fn:expr, ClockController) => {
         $crate::register_driver!(@internal $name, $compat, $init_fn, ClockController, ".drivers.clock");
     };
+    ($name:ident, $compat:literal, $init_fn:expr, PowerDomainController) => {
+        $crate::register_driver!(@internal $name, $compat, $init_fn, PowerDomainController, ".drivers.power_domain");
+    };
 }
 /// Internal implementation for all probe sriver functions
 pub fn probe_driver<D: 'static + ?Sized>(start_tag: *const u8, stop_tag: *const u8, tree: &Dtb) -> Result<&'static D, DriverProbeError> {
