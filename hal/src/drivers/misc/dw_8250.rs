@@ -95,11 +95,12 @@ impl Serial for Dw8250Uart {
     }
 }
 
-fn init_dw_8250_uart(base: usize, tree: &crate::services::dtb::Dtb) -> Result<&'static dyn Serial, DriverProbeError> {
+fn init_dw_8250_uart(base: usize, tree: &dyn crate::services::device_query::DeviceQuery) -> Result<&'static dyn Serial, DriverProbeError> {
     static INSTANCE: StaticCell<Dw8250Uart> = StaticCell::uninit();
 
     let clock_hz = tree
-        .find_compatible("rockchip,serial")
+        .as_dtb()
+        .and_then(|dtb| dtb.find_compatible("rockchip,serial"))
         .and_then(|n| n.property("clock-frequency")?.as_u32())
         .unwrap_or(24_000_000);
 

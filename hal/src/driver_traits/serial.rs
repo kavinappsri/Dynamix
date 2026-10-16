@@ -1,6 +1,5 @@
 //! Interfaces shared by serial devices.
 
-use crate::services::dtb::Dtb;
 use crate::services::sync::StaticCell;
 use crate::define_probe;
 

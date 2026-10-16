@@ -1,7 +1,6 @@
 //! Generic framebuffer output and device-tree driver discovery.
 
 use crate::define_probe;
-use crate::services::dtb::Dtb;
 
 /// A pixel-addressable XRGB8888 framebuffer.
 ///

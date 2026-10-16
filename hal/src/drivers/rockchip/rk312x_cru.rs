@@ -7,7 +7,7 @@
 use crate::driver_traits::clocks::{ClockController, ClockError};
 use crate::driver_traits::driver::DriverProbeError;
 use crate::register_driver;
-use crate::services::dtb::Dtb;
+use crate::services::device_query::DeviceQuery;
 use crate::services::mmio::Mmio;
 use crate::services::sync::StaticCell;
 use crate::driver_traits::driver::Driver;
@@ -303,7 +303,7 @@ impl ClockController for Rk3126Cru {
     }
 }
 
-fn init_rk3126_cru(base: usize, _tree: &Dtb) -> Result<&'static dyn ClockController, DriverProbeError> {
+fn init_rk3126_cru(base: usize, _tree: &dyn DeviceQuery) -> Result<&'static dyn ClockController, DriverProbeError> {
     static INSTANCE: StaticCell<Rk3126Cru> = StaticCell::uninit();
     let cru = unsafe { Rk3126Cru::new(base) };
     Ok(INSTANCE.get_or_init(|| cru))

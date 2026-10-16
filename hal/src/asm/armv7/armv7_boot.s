@@ -173,7 +173,7 @@ bss_loop:
 bss_done:
     /* Reset dtb ptr to r0 for rust_main */
     mov r0, r9
-    bl rust_main
+    bl fdt_entry
 
 hang:
     wfe

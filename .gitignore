@@ -3,6 +3,7 @@
 
 #macOS
 .DS_Store
+*.MACOSX
 
 # Python
 __pycache__/
@@ -12,6 +13,7 @@ __pycache__/
 # Logs
 dynamix_asm.log
 dynamix_asm_v7.log
+/dynamix64.log
 
 
 # Device-specific research
@@ -24,3 +26,6 @@ Device_Docs/
 # Misc
 Archive.zip
 digest.txt
+ovmf/
+/esp/
+

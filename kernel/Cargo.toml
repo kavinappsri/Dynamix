@@ -9,5 +9,14 @@ bench = false
 name = "dynamix_kernel"
 path = "src/main.rs"
 
+[features]
+# Console, boot logo and UART shell. They sit on the HAL driver subsystem, which
+# does not exist on x86_64 yet (Phase 4, step 13), so they are off for now.
+drivers = []
+
 [dependencies]
+[target.'cfg(any(target_arch = "aarch64", target_arch = "arm"))'.dependencies]
 hal = { path = "../hal", default-features = false, features = ["board-qemu-virt"] }
+
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+hal = { path = "../hal", default-features = false, features = ["board-qemu-x64"] }

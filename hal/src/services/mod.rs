@@ -6,3 +6,7 @@ pub mod mmio;
 pub mod sync;
 pub mod dtb;
 pub mod pmm;
+pub mod acpi;
+pub mod device_query;
+pub mod boot_info;
+pub mod cpu;

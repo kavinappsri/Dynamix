@@ -2,6 +2,7 @@
 
 use core::arch::asm;
 use core::sync::atomic::{AtomicU8, Ordering};
+use crate::services::power::PowerError;
 
 pub enum PsciMethod {
     Hvc = 0,
@@ -11,20 +12,20 @@ pub enum PsciMethod {
 
 static PSCI_METHOD: AtomicU8 = AtomicU8::new(PsciMethod::Uninitialized as u8);
 
-pub fn init(method: &str) -> bool {
+pub fn init(method: &str) -> Result<(), PowerError> {
     let value = if method == "hvc" {
         PsciMethod::Hvc as u8
     } else if method == "smc" {
         PsciMethod::Smc as u8
     } else {
-        return false;
+        return Err(PowerError::BadDeviceTree);
     };
     
     PSCI_METHOD.store(value, Ordering::Release);
-    true
+   Ok(())
 }
 
-pub fn system_off() {
+pub fn system_off() -> Result<(), PowerError> {
     match PSCI_METHOD.load(Ordering::Acquire) {
         0 => {
             unsafe {
@@ -44,6 +45,7 @@ pub fn system_off() {
                 );
             }
         }
-        _ => (),
+        _ => return Err(PowerError::NotInitialized),
     }
+    Ok(())
 }

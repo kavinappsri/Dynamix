@@ -8,7 +8,7 @@ use crate::drivers::qemu::fw_cfg::FwCfg;
 use crate::services::sync::StaticCell;
 use crate::{register_driver, Framebuffer, FramebufferError};
 use crate::driver_traits::driver::{Driver, DriverProbeError};
-use crate::services::dtb::Dtb;
+use crate::services::device_query::DeviceQuery;
 
 const RAMFB_FILE: &str = "etc/ramfb";
 const XRGB8888: u32 = 0x3432_5258;
@@ -123,7 +123,7 @@ impl Framebuffer for RamFb {
     }
 }
 
-fn init_ramfb(fw_cfg_base: usize, _tree: &Dtb) -> Result<&'static dyn Framebuffer, DriverProbeError> {
+fn init_ramfb(fw_cfg_base: usize, _tree: &dyn DeviceQuery) -> Result<&'static dyn Framebuffer, DriverProbeError> {
     static INSTANCE: StaticCell<RamFb> = StaticCell::uninit();
     let ramfb = RamFb::configure(fw_cfg_base)?;
     let ramfb: &'static RamFb = INSTANCE.get_or_init(|| ramfb);

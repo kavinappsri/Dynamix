@@ -12,6 +12,7 @@ default = ["board-qemu-virt"]
 
 board-qemu-virt = ["driver-pl011", "driver-fw-cfg", "driver-ramfb"]
 board-rk3126 = ["driver-dw-8250", "driver-rk3126-cru", "driver-rk3126-vop"]
+board-qemu-x64 = []
 
 driver-pl011 = []
 driver-fw-cfg = []
@@ -22,3 +23,4 @@ driver-rk3126-vop = ["driver-rk3126-cru"]
 
 
 [dependencies]
+acpi = { version = "=5.2.0", default-features = false}

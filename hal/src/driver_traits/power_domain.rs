@@ -5,7 +5,6 @@
 
 use crate::define_probe;
 use crate::services::sync::StaticCell;
-use crate::services::dtb::Dtb;
 
 static ACTIVE_POWER_DOMAIN_CONTROLLER: StaticCell<&'static dyn PowerDomainController> = StaticCell::uninit();
 

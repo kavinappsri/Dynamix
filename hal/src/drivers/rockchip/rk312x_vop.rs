@@ -16,7 +16,7 @@ use crate::drivers::rockchip::rk312x_cru::Rk3126Clock;
 use crate::register_driver;
 use crate::services::sync::StaticCell;
 use crate::driver_traits::driver::Driver;
-use crate::services::dtb::Dtb;
+use crate::services::device_query::DeviceQuery;
 use crate::services::pmm;
 use crate::services::mmu;
 // --- Register Offsets ---
@@ -334,7 +334,7 @@ impl Framebuffer for Rk312xVop {
     }
 }
 
-fn init_rk312x_vop(vop_base: usize, _tree: &Dtb) -> Result<&'static dyn Framebuffer, DriverProbeError> {
+fn init_rk312x_vop(vop_base: usize, _tree: &dyn DeviceQuery) -> Result<&'static dyn Framebuffer, DriverProbeError> {
     static INSTANCE: StaticCell<Rk312xVop> = StaticCell::uninit();
     let clocks = crate::driver_traits::clocks::active_clock().ok_or(DriverProbeError::InitFailed)?;
 

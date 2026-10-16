@@ -1,5 +1,6 @@
 //! Physical memory manager
 
+use crate::services::device_query::MemoryRegion;
 use crate::services::mmu::{self, MmuError};
 use crate::services::sync::SpinLock;
 
@@ -41,9 +42,11 @@ pub enum PmmError {
     AlreadyInitialized,
     /// A PMM function other than [`init`] was called before [`init`].
     NotReady,
-    /// The reserved region computed for kernel/boot/metadata did not fit
-    /// within the RAM range reported by the DTB.
+    /// No usable region had room for the PMM's metadata after excluding the
+    /// reserved ranges.
     ReservedRegionOutOfRange,
+    /// [`init`] was given no usable memory at all.
+    NoMemory,
     /// Mapping the usable RAM range as identity-mapped normal memory failed.
     MappingFailed(MmuError),
     /// `order` exceeded [`MAX_ORDER`].
@@ -239,8 +242,30 @@ pub struct ReservedRange {
     pub end: usize,
 }
 
-/// Initializes the physical memory manager.
-pub fn init(ram_base: usize, ram_size: usize, reserved: &[ReservedRange]) -> Result<(), PmmError> {
+/// Returns the first frame-aligned address at which `len` bytes fit inside one
+/// of `regions` without touching any of `reserved`.
+fn find_metadata_area(regions: &[MemoryRegion], reserved: &[ReservedRange], len: usize) -> Option<usize> {
+    for region in regions {
+        let start = align_up(region.base, FRAME_SIZE);
+        let end = align_down(region.base + region.size, FRAME_SIZE);
+
+        let mut candidate = start;
+        'search: while candidate + len <= end {
+            for r in reserved {
+                if candidate < r.end && r.start < candidate + len {
+                    candidate = align_up(r.end, FRAME_SIZE);
+                    continue 'search;
+                }
+            }
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Initializes the physical memory manager over the usable RAM `regions`
+/// (which may be several, with holes between them), excluding `reserved`.
+pub fn init(regions: &[MemoryRegion], reserved: &[ReservedRange]) -> Result<(), PmmError> {
     let mut guard = PMM.lock();
     if guard.is_some() {
         return Err(PmmError::AlreadyInitialized);
@@ -249,32 +274,51 @@ pub fn init(ram_base: usize, ram_size: usize, reserved: &[ReservedRange]) -> Res
         return Err(PmmError::TooManyReservedRanges);
     }
 
-    let ram_base = align_down(ram_base, FRAME_SIZE);
-    let ram_end = align_up(ram_base + ram_size, FRAME_SIZE);
-
-    mmu::map_normal(ram_base, ram_end - ram_base).map_err(PmmError::MappingFailed)?;
-
-    let frame_count = (ram_end - ram_base) / FRAME_SIZE;
-    let highest_reserved_end = reserved.iter().map(|r| r.end).max().unwrap_or(ram_base);
-    let meta_start = align_up(highest_reserved_end.max(ram_base), 8);
-    let meta_bytes = frame_count; // 1 byte per FrameState
-    let meta_end = align_up(meta_start + meta_bytes, FRAME_SIZE);
-
-    if meta_end > ram_end {
-        return Err(PmmError::ReservedRegionOutOfRange);
+    // Frame-aligned view of the usable regions and the span they cover.
+    let mut ram_base = usize::MAX;
+    let mut ram_end = 0usize;
+    let mut frames_total = 0usize;
+    for region in regions {
+        let start = align_up(region.base, FRAME_SIZE);
+        let end = align_down(region.base + region.size, FRAME_SIZE);
+        if start >= end {
+            continue;
+        }
+        mmu::map_normal(start, end - start).map_err(PmmError::MappingFailed)?;
+        ram_base = ram_base.min(start);
+        ram_end = ram_end.max(end);
+        frames_total += (end - start) / FRAME_SIZE;
+    }
+    if frames_total == 0 {
+        return Err(PmmError::NoMemory);
     }
 
-    // SAFETY: [meta_start, meta_end) is within the freshly identity-mapped
-    // RAM range, is above every caller-supplied reserved range, and is not
-    // otherwise referenced by anyone at this point in boot.
+    // Reserved ranges are rounded outwards to whole frames.
+    let mut all_reserved: [ReservedRange; MAX_RESERVED_RANGES + 1] =
+        [ReservedRange { start: 0, end: 0 }; MAX_RESERVED_RANGES + 1];
+    for (slot, r) in all_reserved.iter_mut().zip(reserved) {
+        *slot = ReservedRange { start: align_down(r.start, FRAME_SIZE), end: align_up(r.end, FRAME_SIZE) };
+    }
+    let reserved_count = reserved.len();
+
+    // One state entry per frame of the whole span (holes included).
+    let span_frames = (ram_end - ram_base) / FRAME_SIZE;
+    let meta_len = align_up(span_frames * core::mem::size_of::<FrameState>(), FRAME_SIZE);
+    let meta_start = find_metadata_area(regions, &all_reserved[..reserved_count], meta_len)
+        .ok_or(PmmError::ReservedRegionOutOfRange)?;
+    all_reserved[reserved_count] = ReservedRange { start: meta_start, end: meta_start + meta_len };
+    let all_reserved = &all_reserved[..=reserved_count];
+
+    // SAFETY: [meta_start, meta_start + meta_len) lies inside a region that was
+    // just identity-mapped, clear of every reserved range, and nobody else
+    // references it at this point in boot.
     let frame_state: &'static mut [FrameState] = unsafe {
         let ptr = meta_start as *mut FrameState;
-        core::ptr::write_bytes(ptr, 0, frame_count);
-        core::slice::from_raw_parts_mut(ptr, frame_count)
+        for i in 0..span_frames {
+            ptr.add(i).write(FrameState::Allocated);
+        }
+        core::slice::from_raw_parts_mut(ptr, span_frames)
     };
-    for s in frame_state.iter_mut() {
-        *s = FrameState::Allocated;
-    }
 
     let mut pmm = Pmm {
         frame_state,
@@ -282,35 +326,31 @@ pub fn init(ram_base: usize, ram_size: usize, reserved: &[ReservedRange]) -> Res
         base_index: ram_base >> FRAME_SHIFT,
         free_lists: [None; MAX_ORDER + 1],
         frames_free: 0,
-        frames_total: frame_count,
+        frames_total,
     };
 
-    // Build the free lists
-    let mut all_reserved: [ReservedRange; MAX_RESERVED_RANGES + 1] =
-        [ReservedRange { start: 0, end: 0 }; MAX_RESERVED_RANGES + 1];
-    let reserved_count = reserved.len();
-    all_reserved[..reserved_count].copy_from_slice(reserved);
-    all_reserved[reserved_count] = ReservedRange {
-        start: meta_start,
-        end: meta_end,
-    };
-    let all_reserved = &all_reserved[..=reserved_count];
-
-    free_unreserved_ranges(&mut pmm, ram_base, ram_end, all_reserved);
+    for region in regions {
+        let start = align_up(region.base, FRAME_SIZE);
+        let end = align_down(region.base + region.size, FRAME_SIZE);
+        if start < end {
+            free_unreserved_ranges(&mut pmm, start, end, all_reserved);
+        }
+    }
 
     *guard = Some(pmm);
     Ok(())
 }
 
-/// Walks `[ram_base, ram_end)`, inserting every maximal aligned
-/// power-of-two-sized free run into the buddy free lists, skipping bytes
-/// covered by any range in `reserved`.
-fn free_unreserved_ranges(pmm: &mut Pmm, ram_base: usize, ram_end: usize, reserved: &[ReservedRange]) {
-    let mut cursor = ram_base;
-    while cursor < ram_end {
+/// Walks `[start, end)`, inserting every maximal aligned power-of-two-sized
+/// free run into the buddy free lists, skipping bytes covered by any range in
+/// `reserved`. Block alignment is relative to the PMM's base address.
+fn free_unreserved_ranges(pmm: &mut Pmm, start: usize, end: usize, reserved: &[ReservedRange]) {
+    let ram_base = pmm.base_addr;
+    let mut cursor = start;
+    while cursor < end {
         // Find how far the current free run extends before hitting a
-        // reserved range (or the end of RAM).
-        let mut run_end = ram_end;
+        // reserved range (or the end of the region).
+        let mut run_end = end;
         let mut in_reserved = false;
         for r in reserved {
             if cursor >= r.start && cursor < r.end {

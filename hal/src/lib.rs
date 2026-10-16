@@ -28,13 +28,25 @@ pub mod aarch64;
 #[cfg(target_arch = "arm")]
 pub mod armv7;
 
+#[cfg(not(target_arch = "x86_64"))]
 pub mod drivers;
 pub mod services;
+
+#[cfg(not(target_arch = "x86_64"))]
 pub mod driver_traits;
 
+#[cfg(target_arch = "x86_64")]
+pub mod x86_64;
+pub mod boot;
 
+#[cfg(target_arch = "x86_64")]
+pub use acpi;
+#[cfg(not(target_arch = "x86_64"))]
 pub use driver_traits::framebuffer::{Framebuffer, FramebufferError};
+#[cfg(not(target_arch = "x86_64"))]
 pub use driver_traits::serial::{Serial, active_serial, probe_serial};
+
+
 
 use core::arch::global_asm;
 
@@ -47,6 +59,6 @@ global_asm!(include_str!("asm/aarch64/aarch64_boot.s"));
 #[cfg(target_arch = "arm")]
 global_asm!(include_str!("asm/armv7/armv7_boot.s"));
 
-#[cfg(not(any(target_arch = "aarch64", target_arch = "arm")))]
+#[cfg(not(any(target_arch = "aarch64", target_arch = "arm", target_arch = "x86_64")))]
 compile_error!("This architecture is currently not supported");
 

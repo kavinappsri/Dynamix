@@ -2,7 +2,6 @@
 
 use crate::define_probe;
 use crate::services::sync::StaticCell;
-use crate::services::dtb::Dtb;
 
 static ACTIVE_CLOCK: StaticCell<&'static dyn ClockController> = StaticCell::uninit();
 

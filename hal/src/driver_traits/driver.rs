@@ -5,13 +5,14 @@
 //! We'll see how it goes
 
 use crate::services::dtb::Dtb;
+use crate::services::device_query::DeviceQuery;
 
 /// Driver struct, Generic over the driver trait
 #[repr(C)]
 pub struct Driver<T: 'static + ?Sized> {
     pub name: &'static str,
     pub compatible: &'static str,
-    pub init: fn(base: usize, node: &Dtb) -> Result<&'static T, DriverProbeError>,
+    pub init: fn(base: usize, tree: &dyn DeviceQuery) -> Result<&'static T, DriverProbeError>,
 }
 
 
@@ -50,7 +51,7 @@ macro_rules! register_driver {
     };
 }
 /// Internal implementation for all probe sriver functions
-pub fn probe_driver<D: 'static + ?Sized>(start_tag: *const u8, stop_tag: *const u8, tree: &Dtb) -> Result<&'static D, DriverProbeError> {
+pub fn probe_driver<D: 'static + ?Sized>(start_tag: *const u8, stop_tag: *const u8, tree: &dyn DeviceQuery) -> Result<&'static D, DriverProbeError> {
     let start = start_tag as *const Driver<D>;
     let stop = stop_tag as *const Driver<D>;
     let count = (stop as usize - start as usize) / size_of::<Driver<D>>();
@@ -78,7 +79,7 @@ macro_rules! define_probe {
             static __stop_tag: u8;
         }
 
-        pub fn $fn_name(tree: &Dtb) -> Result<&'static dyn $dtype, $crate::driver_traits::driver::DriverProbeError> {
+        pub fn $fn_name(tree: &dyn $crate::services::device_query::DeviceQuery) -> Result<&'static dyn $dtype, $crate::driver_traits::driver::DriverProbeError> {
             let driver = $crate::driver_traits::driver::probe_driver::<dyn $dtype>(
                 core::ptr::addr_of!(__start_tag),
                 core::ptr::addr_of!(__stop_tag),

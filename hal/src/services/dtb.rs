@@ -5,6 +5,7 @@
 //! device-tree implementation: `reg` decoding supports common one- and
 //! two-cell address/size pairs and compatible matching is string-based.
 
+use crate::services::device_query::{DeviceQuery, MemoryRegion};
 
 const FDT_MAGIC: u32 = 0xD00DFEED;
 
@@ -137,6 +138,10 @@ impl<'a> Dtb<'a> {
     pub fn find_alias(&self, alias: &str) -> Option<Node<'a>> {
         let path = self.resolve_alias(alias)?;
         self.find_path(path)
+    }
+
+    pub fn physical_range(&self) -> (usize, usize) {
+        (self.slice.as_ptr() as usize, self.slice.len())
     }
 }
 
@@ -385,5 +390,28 @@ fn read_be_u32(slice: &[u8], offset: usize) -> u32 {
     u32::from_be_bytes(bytes)
 }
 
+impl<'a> DeviceQuery for Dtb<'a> {
+    fn find_compatible_address(&self, compatible: &str) -> Option<(usize, usize)> {
+        Dtb::find_compatible_address(self, compatible)
+    }
+
+    fn memory_regions(&self, out: &mut [MemoryRegion]) -> usize {
+        if out.is_empty() {
+            return 0;
+        }
+        
+        match self.find_node("memory").and_then(|node| node.reg()) {
+            Some((base, size)) => {
+                out[0] = MemoryRegion { base: base as usize, size: size as usize };
+                1
+            }
+            None => 0,
+        }
+    }
+
+    fn as_dtb(&self) -> Option<&Dtb<'_>> {
+        Some(self)
+    }
+}
 
  

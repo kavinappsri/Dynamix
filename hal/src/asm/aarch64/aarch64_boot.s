@@ -184,7 +184,7 @@ bss_loop:
 bss_done:
     /* Reset dtb pointer back to x0 */
     mov x0, x19
-    bl rust_main
+    bl fdt_entry
 
 hang:
     wfe

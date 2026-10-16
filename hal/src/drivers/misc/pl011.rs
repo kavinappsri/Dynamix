@@ -51,7 +51,7 @@ impl Serial for Pl011Uart {
     }
 }
 
-fn init_pl011_uart(base: usize, _tree: &crate::services::dtb::Dtb) -> Result<&'static dyn Serial, DriverProbeError> {
+fn init_pl011_uart(base: usize, _tree: &dyn crate::services::device_query::DeviceQuery) -> Result<&'static dyn Serial, DriverProbeError> {
     static INSTANCE: StaticCell<Pl011Uart> = StaticCell::uninit();
     Ok(INSTANCE.get_or_init(|| {
         // SAFETY: device-tree addresses are identity mapped during early boot.

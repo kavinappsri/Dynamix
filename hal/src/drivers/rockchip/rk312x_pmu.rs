@@ -6,7 +6,7 @@ use crate::driver_traits::driver::Driver;
 use crate::driver_traits::driver::DriverProbeError;
 use crate::driver_traits::power_domain::{PowerDomainController, PowerDomainError};
 use crate::register_driver;
-use crate::services::dtb::Dtb;
+use crate::services::device_query::DeviceQuery;
 use crate::services::mmio::Mmio;
 use crate::services::sync::StaticCell;
 use crate::services::timer::delay_ms;
@@ -143,7 +143,7 @@ impl PowerDomainController for Rk3126Pmu {
     }
 }
 
-fn init_rk3126_pmu(base: usize, _tree: &Dtb) -> Result<&'static dyn PowerDomainController, DriverProbeError> {
+fn init_rk3126_pmu(base: usize, _tree: &dyn DeviceQuery) -> Result<&'static dyn PowerDomainController, DriverProbeError> {
     static INSTANCE: StaticCell<Rk3126Pmu> = StaticCell::uninit();
     let pmu = unsafe { Rk3126Pmu::new(base) };
     Ok(INSTANCE.get_or_init(|| pmu))
