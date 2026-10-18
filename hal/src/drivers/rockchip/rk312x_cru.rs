@@ -303,7 +303,8 @@ impl ClockController for Rk3126Cru {
     }
 }
 
-fn init_rk3126_cru(base: usize, _tree: &dyn DeviceQuery) -> Result<&'static dyn ClockController, DriverProbeError> {
+fn init_rk3126_cru(resource: crate::services::device_query::DeviceResource, _tree: &dyn DeviceQuery) -> Result<&'static dyn ClockController, DriverProbeError> {
+    let base = resource.mmio_base().ok_or(DriverProbeError::WrongResource)?;
     static INSTANCE: StaticCell<Rk3126Cru> = StaticCell::uninit();
     let cru = unsafe { Rk3126Cru::new(base) };
     Ok(INSTANCE.get_or_init(|| cru))

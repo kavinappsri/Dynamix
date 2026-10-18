@@ -28,11 +28,8 @@ pub mod aarch64;
 #[cfg(target_arch = "arm")]
 pub mod armv7;
 
-#[cfg(not(target_arch = "x86_64"))]
 pub mod drivers;
 pub mod services;
-
-#[cfg(not(target_arch = "x86_64"))]
 pub mod driver_traits;
 
 #[cfg(target_arch = "x86_64")]
@@ -41,10 +38,9 @@ pub mod boot;
 
 #[cfg(target_arch = "x86_64")]
 pub use acpi;
-#[cfg(not(target_arch = "x86_64"))]
 pub use driver_traits::framebuffer::{Framebuffer, FramebufferError};
-#[cfg(not(target_arch = "x86_64"))]
 pub use driver_traits::serial::{Serial, active_serial, probe_serial};
+
 
 
 

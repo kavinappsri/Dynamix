@@ -30,15 +30,22 @@ pub trait Serial: Sync {
     }
 }
 
+/// Adapts a [`Serial`] device to [`core::fmt::Write`]
+pub struct SerialWriter<'a>(pub &'a dyn Serial);
+
+impl core::fmt::Write for SerialWriter<'_> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.0.write_str(s);
+        Ok(())
+    }
+}
+
 /// Returns the serial device selected by [`crate::probe_serial`], if boot discovery
 /// completed successfully.
-///
-/// Exception and panic reporting can use this without coupling the kernel to a
-/// particular UART implementation.
 pub fn active_serial() -> Option<&'static dyn Serial> {
     ACTIVE_SERIAL.get().copied()
 }
 
 
-define_probe!("__start_serial_drivers", "__stop_serial_drivers", probe_serial, Serial, |driver| { ACTIVE_SERIAL.get_or_init(|| driver); } );
+define_probe!(Serial, probe_serial, |driver| { ACTIVE_SERIAL.get_or_init(|| driver); } );
 

@@ -29,5 +29,4 @@ pub fn active_clock() -> Option<&'static dyn ClockController> {
     ACTIVE_CLOCK.get().copied()
 }
 
-define_probe!("__start_clock_drivers", "__stop_clock_drivers", probe_clocks, ClockController, |driver| { ACTIVE_CLOCK.get_or_init(|| driver) } );
-
+define_probe!(ClockController, probe_clocks, |driver| { ACTIVE_CLOCK.get_or_init(|| driver) } );

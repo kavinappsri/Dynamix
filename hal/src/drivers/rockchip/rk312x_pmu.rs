@@ -143,7 +143,8 @@ impl PowerDomainController for Rk3126Pmu {
     }
 }
 
-fn init_rk3126_pmu(base: usize, _tree: &dyn DeviceQuery) -> Result<&'static dyn PowerDomainController, DriverProbeError> {
+fn init_rk3126_pmu(resource: crate::services::device_query::DeviceResource, _tree: &dyn DeviceQuery) -> Result<&'static dyn PowerDomainController, DriverProbeError> {
+    let base = resource.mmio_base().ok_or(DriverProbeError::WrongResource)?;
     static INSTANCE: StaticCell<Rk3126Pmu> = StaticCell::uninit();
     let pmu = unsafe { Rk3126Pmu::new(base) };
     Ok(INSTANCE.get_or_init(|| pmu))

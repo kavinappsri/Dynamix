@@ -72,6 +72,7 @@ pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
                             PmmError::OrderTooLarge => {console.writeln("Order too large");}
                             PmmError::TooManyReservedRanges => {console.writeln("TooMany reserved ranges");}
                             PmmError::InvalidFree => {console.writeln("Invalid free");}
+                            PmmError::NoMemory => {console.writeln("No memory");}
                         }
                     }
                     Ok((free, total)) => {

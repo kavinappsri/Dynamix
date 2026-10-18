@@ -9,6 +9,10 @@ pub enum PowerError {
     NotDescribed,
     /// The description exists but names something this kernel cannot drive.
     Unsupported,
+    /// The platform description is present but malformed.
+    BadDeviceTree,
+    /// Power control was used before `init` succeeded.
+    NotInitialized,
 }
 
 /// Sets up the power system from the platform description:
@@ -23,11 +27,9 @@ pub fn init(tree: &DeviceTree<'_>) -> Result<(), PowerError> {
         let method = psci.property("method").and_then(|p| p.as_str()).ok_or(PowerError::Unsupported)?;
 
         #[cfg(target_arch = "aarch64")]
-        let ok = crate::aarch64::aarch64_power::init(method);
+        { crate::aarch64::aarch64_power::init(method) }
         #[cfg(target_arch = "arm")]
-        let ok = crate::armv7::armv7_power::init(method);
-
-        if ok { Ok(()) } else { Err(PowerError::Unsupported) }
+        { crate::armv7::armv7_power::init(method) }
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -42,10 +44,10 @@ pub fn init(tree: &DeviceTree<'_>) -> Result<(), PowerError> {
 /// Turns off the system. Returns if power-off is unavailable.
 pub fn system_off() {
     #[cfg(target_arch = "aarch64")]
-    crate::aarch64::aarch64_power::system_off();
+    let _ = crate::aarch64::aarch64_power::system_off();
 
     #[cfg(target_arch = "arm")]
-    crate::armv7::armv7_power::system_off();
+    let _ = crate::armv7::armv7_power::system_off();
 
     #[cfg(target_arch = "x86_64")]
     crate::x86_64::x64_power::system_off();

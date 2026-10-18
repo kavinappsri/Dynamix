@@ -3,9 +3,8 @@
 //! I'm making this to make the kernel completely independent of the fdt
 //! thus eliminating the architecture issue
 
-use crate::services::device_query::{DeviceQuery, MemoryRegion, MAX_MEMORY_REGIONS};
+use crate::services::device_query::{DeviceQuery, DeviceResource, MemoryRegion, MAX_MEMORY_REGIONS};
 use crate::services::dtb::Dtb;
-#[cfg(target_arch = "x86_64")]
 use crate::services::acpi::AcpiQuery;
 
 #[derive(Clone, Copy)]
@@ -44,7 +43,6 @@ pub enum DeviceTree<'a> {
     /// A Flattened Device Tree blob
     Fdt(Dtb<'a>),
     /// The ACPI tables
-    #[cfg(target_arch = "x86_64")]
     Acpi(AcpiQuery),
 }
 
@@ -52,15 +50,20 @@ impl<'a> DeviceQuery for DeviceTree<'a> {
     fn find_compatible_address(&self, compatible: &str) -> Option<(usize, usize)> {
         match self {
             DeviceTree::Fdt(dtb) => dtb.find_compatible_address(compatible),
-            #[cfg(target_arch = "x86_64")]
             DeviceTree::Acpi(acpi) => acpi.find_compatible_address(compatible),
+        }
+    }
+
+    fn find_compatible_resource(&self, compatible: &str) -> Option<DeviceResource> {
+        match self {
+            DeviceTree::Fdt(dtb) => dtb.find_compatible_resource(compatible),
+            DeviceTree::Acpi(acpi) => acpi.find_compatible_resource(compatible),
         }
     }
 
     fn memory_regions(&self, out: &mut [MemoryRegion]) -> usize {
         match self {
             DeviceTree::Fdt(dtb) => dtb.memory_regions(out),
-            #[cfg(target_arch = "x86_64")]
             DeviceTree::Acpi(acpi) => acpi.memory_regions(out),
         }
     }
@@ -68,7 +71,6 @@ impl<'a> DeviceQuery for DeviceTree<'a> {
     fn as_dtb(&self) -> Option<&Dtb<'_>> {
         match self {
             DeviceTree::Fdt(dtb) => Some(dtb),
-            #[cfg(target_arch = "x86_64")]
             DeviceTree::Acpi(_) => None,
         }
     }

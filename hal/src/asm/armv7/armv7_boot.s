@@ -69,6 +69,24 @@ _ttbr0_section_loop:
     bne _ttbr0_section_loop
 
     /*
+     * Also map the DTB (r9) */
+    cmp r9, #0
+    beq _skip_dtb_map
+    lsr r1, r9, #20               /* r1 = DTB section index */
+    cmp r1, #0x800
+    bhs _skip_dtb_map             /* outside TTBR0's range */
+    lsl r3, r1, #20               /* r3 = section's physical address */
+    orr r6, r3, r0
+    str r6, [r4, r1, lsl #2]
+    add r1, r1, #1
+    cmp r1, #0x800
+    bhs _skip_dtb_map             /* next section would leave TTBR0's range */
+    add r3, r3, #0x00100000
+    orr r6, r3, r0
+    str r6, [r4, r1, lsl #2]
+_skip_dtb_map:
+
+    /*
      * QEMU enters at a 64 KiB offset within its physical MiB, while the
      * fixed higher-half VMA begins at a MiB boundary. A section descriptor
      * cannot represent that offset, so TTBR1 uses coarse L2 tables with

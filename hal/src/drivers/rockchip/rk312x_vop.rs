@@ -334,7 +334,8 @@ impl Framebuffer for Rk312xVop {
     }
 }
 
-fn init_rk312x_vop(vop_base: usize, _tree: &dyn DeviceQuery) -> Result<&'static dyn Framebuffer, DriverProbeError> {
+fn init_rk312x_vop(resource: crate::services::device_query::DeviceResource, _tree: &dyn DeviceQuery) -> Result<&'static dyn Framebuffer, DriverProbeError> {
+    let vop_base = resource.mmio_base().ok_or(DriverProbeError::WrongResource)?;
     static INSTANCE: StaticCell<Rk312xVop> = StaticCell::uninit();
     let clocks = crate::driver_traits::clocks::active_clock().ok_or(DriverProbeError::InitFailed)?;
 

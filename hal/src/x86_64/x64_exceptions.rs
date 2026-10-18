@@ -5,7 +5,8 @@ use core::cell::UnsafeCell;
 use core::fmt::Write;
 
 use crate::services::boot_info::RawFramebufferInfo;
-use crate::x86_64::{panic_serial, gdt};
+use crate::driver_traits::serial::{SerialWriter, active_serial};
+use crate::x86_64::gdt;
 
 global_asm!(include_str!("../asm/x86_64/x64_vectors.s"));
 
@@ -124,8 +125,6 @@ const NAMES: [&str; 32] = [
 
 /// Installs the kernel GDT/TSS and the IDT. Call once, panic, with interrupts masked.
 pub fn init() {
-    panic_serial::init();
-
     // SAFETY: single core, interrupts masked, higher-half code. The stub table
     // holds relocated (higher-half) addresses by the time we run.
     unsafe {
@@ -156,7 +155,9 @@ fn read_cr2() -> u64 {
 }
 
 fn report(ctx: &ExceptionContext) {
-    let mut out = panic_serial::Writer;
+    // Serial may not be probed yet (or at all); the framebuffer paint still happens.
+    let Some(uart) = active_serial() else { return };
+    let mut out = SerialWriter(uart);
     let name = NAMES.get(ctx.vector as usize).copied().unwrap_or("unknown");
     let _ = writeln!(out, "\n=== CPU EXCEPTION: {} (vector {}) ===", name, ctx.vector);
     let _ = writeln!(out, "error code {:#x}", ctx.error_code);

@@ -386,7 +386,7 @@ fn invalidate_range(start: u32, len: u32) {
         let mut va = start;
         let end = start + len;
         while va < end {
-            asm!("mcr p15 0, {}, c8, c7, 1", in(reg) va, options(nostack));
+            asm!("mcr p15, 0, {}, c8, c7, 1", in(reg) va, options(nostack));
             va += L2_PAGE_SIZE;
         }
         asm!("dsb", "isb", options(nostack));

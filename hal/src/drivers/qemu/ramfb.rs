@@ -106,7 +106,7 @@ impl Framebuffer for RamFb {
         if x.checked_add(source_width)
             .is_none_or(|right| right > WIDTH)
             || y.checked_add(source_height)
-                .is_none_or(|bottom| bottom > HEIGHT)
+            .is_none_or(|bottom| bottom > HEIGHT)
         {
             return Err(DestinationOutOfBounds);
         }
@@ -123,7 +123,8 @@ impl Framebuffer for RamFb {
     }
 }
 
-fn init_ramfb(fw_cfg_base: usize, _tree: &dyn DeviceQuery) -> Result<&'static dyn Framebuffer, DriverProbeError> {
+fn init_ramfb(resource: crate::services::device_query::DeviceResource, _tree: &dyn DeviceQuery) -> Result<&'static dyn Framebuffer, DriverProbeError> {
+    let fw_cfg_base = resource.mmio_base().ok_or(DriverProbeError::WrongResource)?;
     static INSTANCE: StaticCell<RamFb> = StaticCell::uninit();
     let ramfb = RamFb::configure(fw_cfg_base)?;
     let ramfb: &'static RamFb = INSTANCE.get_or_init(|| ramfb);

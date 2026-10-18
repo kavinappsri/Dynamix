@@ -3,11 +3,13 @@
 //! Currently, this is heap-less, so no AML parsing. im reserving that stage for future polish
 //! once mmu and pmm are up and working. So, currently the `alloc` / `allocator_api` are disabled
 //! in the `acpi` crate
+//!
+//! TODO: AML Interpreter via `aml` crate
 
 
 use core::ptr::NonNull;
 
-use crate::services::device_query::{DeviceQuery, MemoryRegion};
+use crate::services::device_query::{DeviceQuery, DeviceResource, MemoryRegion};
 
 use acpi::{AcpiError, AcpiTable, AcpiTables};
 use acpi::handler::{AcpiHandler, PhysicalMapping};
@@ -69,14 +71,6 @@ impl AcpiQuery {
     }
 
     /// Re-reads the root table (RSDT/XSDT) through the live page tables.
-    ///
-    /// `AcpiTables` keeps a pointer to the root table it mapped at creation.
-    /// A query built before the kernel switched page tables points into
-    /// firmware memory the kernel tables do not map, so call this once after
-    /// the switch (and before any `find_table`).
-    ///
-    /// # Safety
-    /// Same contract as [`AcpiQuery::from_rsdp`]; paging must be installed.
     pub unsafe fn remap(&mut self) -> Result<(), AcpiQueryError> {
         // SAFETY: upheld by this function's own contract.
         self.tables = unsafe { AcpiTables::from_rsdp(DynamixAcpiHandler, self.rsdp_address)? };
@@ -106,12 +100,46 @@ impl AcpiQuery {
     }
 }
 
+/// ACPI `_HID` of a 16550-compatible UART.
+const HID_NS16550: &str = "PNP0501";
+/// `PNP0501` as an AML `DWordConst`: opcode, then the compressed EISA id.
+const AML_EISA_PNP0501: [u8; 5] = [0x0C, 0x41, 0xD0, 0x05, 0x01];
+/// Where the PC's first 16550 UART decodes its registers.
+const LEGACY_COM1: DeviceResource = DeviceResource::Io { base: 0x3F8, count: 8 };
+
+impl AcpiQuery {
+    /// Whether the DSDT mentions `hid` as a device `_HID` (string or EISA id form).
+    ///
+    /// This is a byte scan, not AML evaluation: it can say a device of that
+    /// type is declared, not where it is. TODO: replace with real
+    /// `_HID`/`_CRS` walk once the `aml` interpreter exists.
+    fn dsdt_declares(&self, hid: &str, eisa: &[u8]) -> bool {
+        let Some((phys, len)) = self.dsdt_aml() else { return false };
+        if crate::services::mmu::map_normal(phys, len).is_err() {
+            return false;
+        }
+        // SAFETY: the DSDT was just mapped and firmware keeps it alive.
+        let aml = unsafe { core::slice::from_raw_parts(phys as *const u8, len) };
+        aml.windows(eisa.len()).any(|w| w == eisa)
+            || aml.windows(hid.len()).any(|w| w == hid.as_bytes())
+    }
+}
+
 impl DeviceQuery for AcpiQuery {
     fn find_compatible_address(&self, _compatible: &str) -> Option<(usize, usize)> {
         // ACPI has no `compatible`-string equivalent for arbitrary platform
         // devices; that lookup goes through `_HID`/`_CID` in the AML
         // namespace, which this service CURRENTLY doesn't support
         None
+    }
+
+    fn find_compatible_resource(&self, compatible: &str) -> Option<DeviceResource> {
+        // Stopgap until AML is interpreted: a declared 16550 UART is assumed to
+        // sit at the legacy COM1 ports, which is where QEMU and PCs put it.
+        match compatible {
+            HID_NS16550 if self.dsdt_declares(HID_NS16550, &AML_EISA_PNP0501) => Some(LEGACY_COM1),
+            _ => None,
+        }
     }
 
     fn memory_regions(&self, _out: &mut [MemoryRegion]) -> usize {

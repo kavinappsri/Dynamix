@@ -88,6 +88,24 @@ ttbr0_l2_loop:
     subs x2, x2, #1
     b.ne ttbr0_l2_loop
 
+    /* Also map the DTB (x19) */
+    lsr x5, x19, #30
+    lsr x6, x20, #30
+    cmp x5, x6
+    b.ne skip_dtb_map
+    lsr x5, x19, #21              /* x5 = DTB 2MB block number */
+    and x1, x5, #0x1FF            /* x1 = L2 index */
+    lsl x3, x5, #21               /* x3 = block's physical address */
+    orr x4, x3, x0
+    str x4, [x25, x1, lsl #3]
+    add x1, x1, #1
+    cmp x1, #0x200
+    b.hs skip_dtb_map             /* next block would leave this L2 table */
+    add x3, x3, #0x200000
+    orr x4, x3, x0
+    str x4, [x25, x1, lsl #3]
+skip_dtb_map:
+
     /* TTBR0 L1 - table descriptor pointing at above l2 entry */
     lsr x1, x20, #30
     and x1, x1, #0x1FF

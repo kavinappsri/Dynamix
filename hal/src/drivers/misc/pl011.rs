@@ -18,17 +18,6 @@ impl Pl011Uart {
     const FLAG_TRANSMIT_FULL: u32 = 1 << 5;
 
     /// Creates a UART from its mapped register base.
-    ///
-    /// # Safety
-    /// `base` must be a mapped PL011 register block.
-    /// It must remain exclusively usable by this driver while the returned
-    /// value is used.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let uart = unsafe { hal::aarch64::pl011::Pl011Uart::new(0x0900_0000) };
-    /// ```
     pub const unsafe fn new(base: usize) -> Self {
         Self {
             // SAFETY: upheld by this constructor's contract.
@@ -51,7 +40,8 @@ impl Serial for Pl011Uart {
     }
 }
 
-fn init_pl011_uart(base: usize, _tree: &dyn crate::services::device_query::DeviceQuery) -> Result<&'static dyn Serial, DriverProbeError> {
+fn init_pl011_uart(resource: crate::services::device_query::DeviceResource, _tree: &dyn crate::services::device_query::DeviceQuery) -> Result<&'static dyn Serial, DriverProbeError> {
+    let base = resource.mmio_base().ok_or(DriverProbeError::WrongResource)?;
     static INSTANCE: StaticCell<Pl011Uart> = StaticCell::uninit();
     Ok(INSTANCE.get_or_init(|| {
         // SAFETY: device-tree addresses are identity mapped during early boot.

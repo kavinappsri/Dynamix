@@ -10,5 +10,4 @@ pub mod port;
 pub mod x64_timer;
 pub mod x64_mmu;
 pub mod gdt;
-pub mod panic_serial;
 pub mod x64_exceptions;

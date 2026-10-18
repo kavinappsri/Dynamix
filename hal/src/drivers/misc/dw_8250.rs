@@ -95,7 +95,8 @@ impl Serial for Dw8250Uart {
     }
 }
 
-fn init_dw_8250_uart(base: usize, tree: &dyn crate::services::device_query::DeviceQuery) -> Result<&'static dyn Serial, DriverProbeError> {
+fn init_dw_8250_uart(resource: crate::services::device_query::DeviceResource, tree: &dyn crate::services::device_query::DeviceQuery) -> Result<&'static dyn Serial, DriverProbeError> {
+    let base = resource.mmio_base().ok_or(DriverProbeError::WrongResource)?;
     static INSTANCE: StaticCell<Dw8250Uart> = StaticCell::uninit();
 
     let clock_hz = tree

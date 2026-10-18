@@ -1,6 +1,6 @@
 //! On chip power controller interface
 //!
-//! This trait is for an SoC's internal power supply. the external power
+//! This trait is for internal power supply. the external power
 //! should be handled by another trait, which communicates to the PMIC
 
 use crate::define_probe;
@@ -32,4 +32,4 @@ pub fn active_power_domain_controller() -> Option<&'static dyn PowerDomainContro
     ACTIVE_POWER_DOMAIN_CONTROLLER.get().copied()
 }
 
-define_probe!("__start_power_domain_drivers", "__stop_power_domain_drivers", probe_power_domains, PowerDomainController, |driver| { ACTIVE_POWER_DOMAIN_CONTROLLER.get_or_init(|| driver) } );
+define_probe!(PowerDomainController, probe_power_domains, |driver| { ACTIVE_POWER_DOMAIN_CONTROLLER.get_or_init(|| driver) } );
