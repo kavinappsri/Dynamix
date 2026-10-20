@@ -1,75 +1,53 @@
 # Dynamix
 
-__THIS PROJECT IS BY NO MEANS READY YET, ITS IS A WORK IN PROGRESS__
+Hello, whatever soul who dove into the depths of GitHub to come look at this project.
+For your information, this project (`Dynamix`) is a kernel. Or at least intends to be. currently
+it's just a bunch of code that does shenanigans on bare metal. 
 
-Dynamix is an OS, currently being made as a hobby project. It's coded in Rust. It currently supports QEMU, both aarch64
-and armv7. More platform are intended to be added as their integration and drivers become ready. At this stage the 
-project only shows its boot logo and has a shell which allows you to change the display and shut it down
+If you came here to _actually_ find a decent kernel, your better off somewhere else. That's
+(if that happens) is several years into the future. I'm not really sure
+why you haven't used Linux yet, but that's what you should be doing. 
 
-## Crates
+To those of you who are still here, welcome to the club! It currently only consists of me, me and me again
+(Unless I have stalkers). I don't know why you're here, but as long as you are, which won't be very long, we might
+as well learn how this thing works
 
-This project currently has 2 crates - kernel, and hal
+## Executing the Program
 
-Kernel is the main part of project, it is the part of the OS that performs the higher level logic
+### Perquisites
 
-Hal (Hardware Abstraction Layer) is a set of low level features that accommodate for differences in platform, assisting 
-in setting up the runtime environment for rust and setting up the exception vector table, among other things.
+To properly run this, you'll need a few things, such as
+1. QEMU / An actual device (if you're insane)
+2. Rust 2024 or newer
+3. OVMF (if you're targeting x86_64)
+4. Patience
 
-## General Execution Flow
+### Actually Doing it
 
-Please look at `main.rs` for reference
+Here I'm going to assume you're gonna run it on QEMU, 
 
-The boot assembly (automatically run by importing `hal`) writes the Linux Boot Header, turns on FP/NEON hardware, set 
-the stack pointer, clears the ram, sets the FDT pointer in register 0, and branches to `rust_main` (defined in `main.rs`).
+1. Clone the git onto your computer. 
+2. If your running it for x86_64, make a folder called `ovmf` at project root. copy the code and vars file into it
+3. Now, simply do `cargo run --features board-qemu-virt`. if everything is set up properly, it should work.
 
-In `rust_main`, the exception vector table is set up. The FDT is found and parsed by the kernel, which then passes it to
-HAL functions named `probe_serial` and `probe_framebuffer` to find compatible drivers that were compiled with it. The kernel
-then sets up `hal::power` by passing in the `method` property of the `psci` node in the FDT to it.
+Now, if you're going to do it on actual hardware, I'd recommend you do it on a x64 laptop with UEFI. That way everything has a 
+decent chance of working properly. if ur insistent on doing ot on ARM, well you can .... just that you'll have to write the 
+drivers for that as well. You can find out about that [here](docs/Drivers.md)
 
-The kernel then draws its boot logo on the screen, and automatically shuts down after 5 seconds. if the code for the shutdown
-is removed, the kernel will run on a simple shell via the UART, which allows the user to set the display or shut the kernel
-down.
+## Actually understanding what the hell is going on inside the code
 
-## Building and Running
+Now, here you're a bit on your own. there is a lot of things that go on inside these folders, but the least I can do is
+give you a brief overview
 
-### Prerequisites
+The code is split into 2 crates, `kernel` and `hal`. If you want to change what the program can do with its existing resources, 
+you go to `kernel`, but if you want to change / give the kernel more resources, you go to `hal`. currently, since the 
+program only really has a simple shell and framebuffer, the `hal` crate is the bigger one. 
 
-* Rust
-* Python
-* Poetry
-* QEMU (if you are running this on your computer)
+The sequence is like this  - there is an entrypoint in the code for each architecture it supports (`aarch64-unknown-none`,
+`armv7-none-eabi`, `x86_64-unknown-uefi`), but they mainly can be categorized into 2 types - FDT entry, and ACPI entry. 
+Each entry must do a few things - turn on the mmu, enable some required hardware such as the one for FP, etc..., and 
+most importantly, construct and pass to the kernel a `BootInfo` struct, which contains information like a Device tree,
+reserved memory regions, etc... The kernel can then take that and do what it wants, i.e. make a shell. (ik this isn't
+a kernel is supposed to do, but trust me, i've been working on the `hal` for a bit of time, so the kernel is lacking)
 
-### Process
-
-1. Set up the Poetry venv by running the given command at the workspace root
-
-```bash
-poetry install
-```
-
-2. Convert the boot logo to a .bin by running
-
-```bash
-cd Tools
-python generate_image.py ../Assets/Dynamix.png ../kernel/src/logo.bin
-```
-
-3. Build for your targeted environment, passing in the flags of the drivers you want to compile with it, or the board you
-want to compile for (currently only the drivers for qemu-virt board are supported)
-
-```bash
-cargo build --target aarch64-unknown-none --feature board-qemu-virt
-```
-
-4. To run this on your computer, simply run with cargo (this assumes you have the associated qemu board installed)
-
-
-```bash
-cargo run
-```
-
-if that does not work, invoke QEMU manually
-
-```bash
-FILE="target/aarch64-unknown-none/release/dynamix_kernel" && rust-objcopy -O binary "$FILE" "$FILE.bin" && qemu-system-aarch64 -machine virt -cpu cortex-a72 -device ramfb -serial stdio -monitor none -d cpu,in_asm -kernel "$FILE.bin
-```
+Beyond this, you're gonna have to look at the source code yourself. Good Luck!
