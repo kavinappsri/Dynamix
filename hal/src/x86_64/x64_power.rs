@@ -104,10 +104,10 @@ pub fn init(acpi: &AcpiQuery) -> Result<(), PowerError> {
         (pm1a, pm1b, fadt.smi_cmd_port, fadt.acpi_enable)
     };
 
-    let (aml_phys, aml_len) = acpi.dsdt_aml().ok_or(PowerError::NotDescribed)?;
-    crate::services::mmu::map_normal(aml_phys, aml_len).map_err(|_| PowerError::Unsupported)?;
+    let dsdt = acpi.dsdt_aml().ok_or(PowerError::NotDescribed)?;
+    crate::services::mmu::map_normal(dsdt).map_err(|_| PowerError::Unsupported)?;
     // SAFETY: the DSDT's AML stream was just mapped and firmware keeps it alive.
-    let aml = unsafe { core::slice::from_raw_parts(aml_phys as *const u8, aml_len) };
+    let aml = unsafe { core::slice::from_raw_parts(dsdt.start().as_usize() as *const u8, dsdt.len()) };
     let (typ_a, typ_b) = find_s5(aml).ok_or(PowerError::NotDescribed)?;
 
     // Firmware normally enables ACPI mode itself; if it did not, ask the chipset to.

@@ -8,6 +8,8 @@ use core::arch::asm;
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
+use crate::services::addr::PhysRange;
+use crate::services::mmu::MmuError;
 use crate::services::sync::SpinLock;
 
 /// The kernel image lives in virtual memory.
@@ -80,6 +82,21 @@ pub enum PagingError {
     NotMapped,
     /// The kernel image headers were not what we expect.
     BadImage,
+    /// Part of the range is already mapped with a different memory type.
+    TypeConflict,
+}
+
+impl From<PagingError> for MmuError {
+    fn from(error: PagingError) -> Self {
+        match error {
+            PagingError::OutOfTableSpace => MmuError::OutOfTableSpace,
+            PagingError::NotInstalled => MmuError::MmuNotReady,
+            PagingError::AlreadyInstalled => MmuError::AlreadyInitialized,
+            PagingError::NotMapped => MmuError::NotMapped,
+            PagingError::TypeConflict => MmuError::TypeConflict,
+            PagingError::AddressTooHigh | PagingError::Misaligned | PagingError::BadImage => MmuError::InvalidRange,
+        }
+    }
 }
 
 /// Memory type of a mapping.
@@ -111,7 +128,7 @@ impl MemKind {
 }
 
 // ---------------------------------------------------------------------------
-// State shared with boot_paging
+// State shared with the handoff code
 // ---------------------------------------------------------------------------
 
 /// Physical address of the PML4 once installed, `None` before.
@@ -122,7 +139,7 @@ pub fn root() -> Option<u64> {
     }
 }
 
-/// Records the PML4 built by `boot_paging::prepare`.
+/// Records the PML4 built by `handoff::paging::prepare`.
 pub(crate) fn install_root(root: u64) -> Result<(), PagingError> {
     ROOT.compare_exchange(0, root, Ordering::AcqRel, Ordering::Acquire)
         .map(|_| ())
@@ -134,12 +151,13 @@ pub(crate) fn set_virt_offset(offset: u64) {
     VIRT_OFFSET.store(offset, Ordering::Release);
 }
 
-/// Converts an address to physical.
-pub fn va_to_pa(address: u64) -> u64 {
+/// Converts a kernel address to physical (lower-half addresses are already physical).
+pub fn va_to_pa(address: usize) -> usize {
+    let address = address as u64;
     if address >= KERNEL_VIRT_BASE {
-        address.wrapping_sub(VIRT_OFFSET.load(Ordering::Relaxed))
+        address.wrapping_sub(VIRT_OFFSET.load(Ordering::Relaxed)) as usize
     } else {
-        address
+        address as usize
     }
 }
 
@@ -182,7 +200,9 @@ unsafe fn next_table(parent: u64, index: usize) -> Result<u64, PagingError> {
 }
 
 /// Maps `[va, va + len)` to `[pa, pa + len)` as `kind`. Pages that are already
-/// mapped are left untouched (use `remap_range` to change them).
+/// mapped with the same memory type are left alone; ones mapped with a
+/// different type fail with [`PagingError::TypeConflict`] (use `remap_range`
+/// to change a type on purpose).
 pub(crate) unsafe fn map_range(root: u64, va: u64, pa: u64, len: u64, kind: MemKind) -> Result<(), PagingError> {
     if (va | pa) & (PAGE_SIZE - 1) != 0 {
         return Err(PagingError::Misaligned);
@@ -203,6 +223,9 @@ pub(crate) unsafe fn map_range(root: u64, va: u64, pa: u64, len: u64, kind: MemK
             let pd_entry = (*table_ptr(pd)).0[pd_index];
 
             if pd_entry & PRESENT != 0 && pd_entry & HUGE != 0 {
+                if pd_entry & HUGE_CACHE_MASK != kind.bits(true) {
+                    return Err(PagingError::TypeConflict);
+                }
                 // Already covered by a 2 MiB page: skip to the next boundary.
                 offset += core::cmp::min(HUGE_PAGE_SIZE - (v & (HUGE_PAGE_SIZE - 1)), remaining);
                 continue;
@@ -219,6 +242,8 @@ pub(crate) unsafe fn map_range(root: u64, va: u64, pa: u64, len: u64, kind: MemK
             let slot = &mut (*table_ptr(pt)).0[((v >> 12) & 0x1FF) as usize];
             if *slot & PRESENT == 0 {
                 *slot = p | PRESENT | WRITABLE | kind.bits(false);
+            } else if *slot & PAGE_CACHE_MASK != kind.bits(false) {
+                return Err(PagingError::TypeConflict);
             }
         }
         offset += PAGE_SIZE;
@@ -311,8 +336,8 @@ fn page_span(phys: u64, len: u64) -> Result<(u64, u64), PagingError> {
 }
 
 /// Identity-maps `len` bytes at physical address `phys` as `kind`, skipping
-/// anything already mapped.
-pub fn map_identity(phys: u64, len: u64, kind: MemKind) -> Result<(), PagingError> {
+/// anything already mapped with that type.
+fn map_identity(phys: u64, len: u64, kind: MemKind) -> Result<(), PagingError> {
     let root = root().ok_or(PagingError::NotInstalled)?;
     let (start, len) = page_span(phys, len)?;
     let _guard = MAP_LOCK.lock();
@@ -322,12 +347,61 @@ pub fn map_identity(phys: u64, len: u64, kind: MemKind) -> Result<(), PagingErro
 }
 
 /// Changes the memory type of an existing identity mapping.
-pub fn remap_identity(phys: u64, len: u64, kind: MemKind) -> Result<(), PagingError> {
+fn remap_identity(phys: u64, len: u64, kind: MemKind) -> Result<(), PagingError> {
     let root = root().ok_or(PagingError::NotInstalled)?;
     let (start, len) = page_span(phys, len)?;
     let _guard = MAP_LOCK.lock();
     // SAFETY: `root` is the live PML4; changed entries are invalidated.
     unsafe { remap_range(root, start, len, kind) }
+}
+
+// ---------------------------------------------------------------------------
+// Service-facing API (same names and signatures as the other architectures)
+// ---------------------------------------------------------------------------
+
+/// Whether the boot tables are installed, i.e. whether `map_*` can work.
+pub fn is_ready() -> bool {
+    root().is_some()
+}
+
+fn raw(range: PhysRange) -> (u64, u64) {
+    (range.start().as_usize() as u64, range.len() as u64)
+}
+
+/// Identity-maps `range` as strongly uncacheable device memory.
+pub fn map_device(range: PhysRange) -> Result<(), MmuError> {
+    let (phys, len) = raw(range);
+    map_identity(phys, len, MemKind::Device).map_err(Into::into)
+}
+
+/// Identity-maps `range` as ordinary write-back memory.
+pub fn map_normal(range: PhysRange) -> Result<(), MmuError> {
+    let (phys, len) = raw(range);
+    map_identity(phys, len, MemKind::Normal).map_err(Into::into)
+}
+
+/// Identity-maps `range` as non-cacheable memory (write-combining once
+/// [`init`] has programmed the PAT, uncached before that).
+pub fn map_normal_nc(range: PhysRange) -> Result<(), MmuError> {
+    let (phys, len) = raw(range);
+    map_identity(phys, len, MemKind::NormalNc).map_err(Into::into)
+}
+
+/// Changes an already mapped range to ordinary write-back memory.
+pub fn remap_normal(range: PhysRange) -> Result<(), MmuError> {
+    let (phys, len) = raw(range);
+    remap_identity(phys, len, MemKind::Normal).map_err(Into::into)
+}
+
+/// Changes an already mapped range to non-cacheable memory.
+pub fn remap_normal_nc(range: PhysRange) -> Result<(), MmuError> {
+    let (phys, len) = raw(range);
+    remap_identity(phys, len, MemKind::NormalNc).map_err(Into::into)
+}
+
+/// Physical range of the kernel image (empty before the boot tables exist).
+pub fn kernel_image_range() -> PhysRange {
+    super::handoff::paging::image_range().unwrap_or(PhysRange::EMPTY)
 }
 
 // ---------------------------------------------------------------------------
@@ -349,12 +423,12 @@ unsafe fn wrmsr(msr: u32, value: u64) {
 
 /// CPU-side setup on top of the boot tables: programs the PAT so
 /// `NormalNc` mappings become write-combining.
-pub fn init() -> Result<(), PagingError> {
+pub fn init() -> Result<(), MmuError> {
     if root().is_none() {
-        return Err(PagingError::NotInstalled);
+        return Err(MmuError::MmuNotReady);
     }
     if READY.swap(true, Ordering::AcqRel) {
-        return Err(PagingError::AlreadyInstalled);
+        return Err(MmuError::AlreadyInitialized);
     }
 
     // SAFETY: CPUID is always available in long mode.

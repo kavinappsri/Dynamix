@@ -4,7 +4,7 @@ use core::arch::{asm, global_asm};
 use core::cell::UnsafeCell;
 use core::fmt::Write;
 
-use crate::services::boot_info::RawFramebufferInfo;
+use crate::services::framebuffer::FirmwareFramebuffer;
 use crate::driver_traits::serial::{SerialWriter, active_serial};
 use crate::x86_64::gdt;
 
@@ -19,7 +19,7 @@ const GATE_PRESENT_INTERRUPT: u8 = 0x8E; // present, DPL0, 64-bit interrupt gate
 const VECTOR_BREAKPOINT: u64 = 3;
 
 /// Register state at the time of the exception; layout must match
-/// `x86_64_vectors.s` (GPRs pushed in reverse, then the hardware frame).
+/// `x64_vectors.s` (GPRs pushed in reverse, then the hardware frame).
 #[repr(C)]
 pub struct ExceptionContext {
     pub r15: u64,
@@ -182,7 +182,7 @@ fn report(ctx: &ExceptionContext) {
     let _ = writeln!(out, "r13 {:#018x}  r14 {:#018x}  r15 {:#018x}", ctx.r13, ctx.r14, ctx.r15);
 }
 
-fn paint(fb: &RawFramebufferInfo, vector: u64) {
+fn paint(fb: &FirmwareFramebuffer, vector: u64) {
     const MAGENTA: u32 = 0xFF00FF;
     const WHITE: u32 = 0xFFFFFF;
     const BLACK: u32 = 0x000000;

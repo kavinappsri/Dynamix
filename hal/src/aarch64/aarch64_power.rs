@@ -18,7 +18,7 @@ pub fn init(method: &str) -> Result<(), PowerError> {
     } else if method == "smc" {
         PsciMethod::Smc as u8
     } else {
-        return Err(PowerError::BadDeviceTree);
+        return Err(PowerError::BadHardwareDescription);
     };
     
     PSCI_METHOD.store(value, Ordering::Release);

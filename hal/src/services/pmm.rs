@@ -1,39 +1,26 @@
 //! Physical memory manager
 
-use crate::services::device_query::MemoryRegion;
+use crate::services::addr::{FRAME_SHIFT, PhysAddr, PhysRange};
+pub use crate::services::addr::{FRAME_SIZE, PhysFrame};
 use crate::services::mmu::{self, MmuError};
 use crate::services::sync::SpinLock;
-
-/// Frame size in bytes
-pub const FRAME_SIZE: usize = 4096;
-const FRAME_SHIFT: usize = 12;
 
 /// Highest supported buddy order.
 pub const MAX_ORDER: usize = 10;
 
-/// Maximum number of caller-supplied [`ReservedRange`]s [`init`] accepts
+/// Maximum number of caller-supplied reserved ranges [`init`] accepts
 pub const MAX_RESERVED_RANGES: usize = 15;
 
-/// A physical frame address
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct PhysFrame(usize);
+/// The frame starting at the raw address `addr`.
+#[inline]
+fn frame_at(addr: usize) -> PhysFrame {
+    PhysFrame::from_addr(PhysAddr::new(addr))
+}
 
-impl PhysFrame {
-    #[inline]
-    pub const fn from_addr(addr: usize) -> Self {
-        debug_assert!(addr.is_multiple_of(FRAME_SIZE));
-        Self(addr)
-    }
-
-    #[inline]
-    pub const fn addr(self) -> usize {
-        self.0
-    }
-
-    #[inline]
-    const fn index(self) -> usize {
-        self.0 >> FRAME_SHIFT
-    }
+/// The raw start address of `frame`.
+#[inline]
+fn addr_of(frame: PhysFrame) -> usize {
+    frame.addr().as_usize()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,7 +31,9 @@ pub enum PmmError {
     NotReady,
     /// No usable region had room for the PMM's metadata after excluding the
     /// reserved ranges.
-    ReservedRegionOutOfRange,
+    NoRoomForMetadata,
+    /// Every frame is in use (or no free block of the requested order exists).
+    OutOfMemory,
     /// [`init`] was given no usable memory at all.
     NoMemory,
     /// Mapping the usable RAM range as identity-mapped normal memory failed.
@@ -52,7 +41,7 @@ pub enum PmmError {
     /// `order` exceeded [`MAX_ORDER`].
     OrderTooLarge,
     /// More than [`MAX_RESERVED_RANGES`] ranges were passed to [`init`].
-    TooManyReservedRanges,
+    TooManyReserveds,
     /// A frame passed to [`free_frames`] was not aligned to its claimed
     /// order, or was already free (double-free).
     InvalidFree,
@@ -79,7 +68,7 @@ impl Pmm {
     /// Physical address of the free-list link word stored in `frame`'s
     /// first `size_of::<Option<PhysFrame>>()` bytes.
     unsafe fn node_ptr(frame: PhysFrame) -> *mut Option<PhysFrame> {
-        frame.addr() as *mut Option<PhysFrame>
+        addr_of(frame) as *mut Option<PhysFrame>
     }
 
     fn state_mut(&mut self, frame: PhysFrame) -> &mut FrameState {
@@ -102,7 +91,7 @@ impl Pmm {
         self.free_lists[order] = Some(frame);
         *self.state_mut(frame) = FrameState::Free(order as u8);
         for i in 1..(1usize << order) {
-            let tail = PhysFrame::from_addr(frame.addr() + i * FRAME_SIZE);
+            let tail = frame_at(addr_of(frame) + i * FRAME_SIZE);
             *self.state_mut(tail) = FrameState::FreeTail;
         }
     }
@@ -141,9 +130,9 @@ impl Pmm {
 
     fn buddy_of(&self, frame: PhysFrame, order: usize) -> PhysFrame {
         let block_bytes = FRAME_SIZE << order;
-        let offset = frame.addr() - self.base_addr;
+        let offset = addr_of(frame) - self.base_addr;
         let buddy_offset = offset ^ block_bytes;
-        PhysFrame::from_addr(self.base_addr + buddy_offset)
+        frame_at(self.base_addr + buddy_offset)
     }
 
     fn alloc(&mut self, order: usize) -> Option<PhysFrame> {
@@ -165,13 +154,13 @@ impl Pmm {
         while cur_order > order {
             cur_order -= 1;
             let half_bytes = FRAME_SIZE << cur_order;
-            let buddy = PhysFrame::from_addr(cur_frame.addr() + half_bytes);
+            let buddy = frame_at(addr_of(cur_frame) + half_bytes);
             self.push_free(cur_order, buddy);
         }
 
         *self.state_mut(cur_frame) = FrameState::Allocated;
         for i in 1..(1usize << order) {
-            let tail = PhysFrame::from_addr(cur_frame.addr() + i * FRAME_SIZE);
+            let tail = frame_at(addr_of(cur_frame) + i * FRAME_SIZE);
             *self.state_mut(tail) = FrameState::Allocated;
         }
 
@@ -184,7 +173,7 @@ impl Pmm {
         if order > MAX_ORDER {
             return Err(PmmError::OrderTooLarge);
         }
-        let offset = frame.addr().wrapping_sub(self.base_addr);
+        let offset = addr_of(frame).wrapping_sub(self.base_addr);
         if !self.in_range(frame) || !offset.is_multiple_of(FRAME_SIZE << order)  {
             return Err(PmmError::InvalidFree);
         }
@@ -217,7 +206,7 @@ impl Pmm {
 
             self.remove_free(cur_order, buddy);
             // The merged block's base is whichever of the two came first.
-            cur_frame = PhysFrame::from_addr(cur_frame.addr().min(buddy.addr()));
+            cur_frame = frame_at(addr_of(cur_frame).min(addr_of(buddy)));
             cur_order += 1;
         }
 
@@ -233,21 +222,29 @@ unsafe impl Send for Pmm {}
 
 static PMM: SpinLock<Option<Pmm>> = SpinLock::new(None);
 
-/// A physically contiguous, page-aligned RAM range excluded from the free
-/// pool -- the kernel image, boot/device page tables, the DTB blob, or the
+/// A frame-aligned `[start, end)` byte range excluded from the free pool --
+/// the kernel image, boot/device page tables, the firmware's tables, or the
 /// PMM's own metadata array.
 #[derive(Clone, Copy)]
-pub struct ReservedRange {
-    pub start: usize,
-    pub end: usize,
+struct Reserved {
+    start: usize,
+    end: usize,
+}
+
+impl Reserved {
+    /// `range` rounded outwards to whole frames.
+    fn covering(range: PhysRange) -> Self {
+        let range = range.round_out(FRAME_SIZE);
+        Self { start: range.start().as_usize(), end: range.end().as_usize() }
+    }
 }
 
 /// Returns the first frame-aligned address at which `len` bytes fit inside one
 /// of `regions` without touching any of `reserved`.
-fn find_metadata_area(regions: &[MemoryRegion], reserved: &[ReservedRange], len: usize) -> Option<usize> {
+fn find_metadata_area(regions: &[PhysRange], reserved: &[Reserved], len: usize) -> Option<usize> {
     for region in regions {
-        let start = align_up(region.base, FRAME_SIZE);
-        let end = align_down(region.base + region.size, FRAME_SIZE);
+        let start = align_up(region.start().as_usize(), FRAME_SIZE);
+        let end = align_down(region.end().as_usize(), FRAME_SIZE);
 
         let mut candidate = start;
         'search: while candidate + len <= end {
@@ -265,13 +262,13 @@ fn find_metadata_area(regions: &[MemoryRegion], reserved: &[ReservedRange], len:
 
 /// Initializes the physical memory manager over the usable RAM `regions`
 /// (which may be several, with holes between them), excluding `reserved`.
-pub fn init(regions: &[MemoryRegion], reserved: &[ReservedRange]) -> Result<(), PmmError> {
+pub fn init(regions: &[PhysRange], reserved: &[PhysRange]) -> Result<(), PmmError> {
     let mut guard = PMM.lock();
     if guard.is_some() {
         return Err(PmmError::AlreadyInitialized);
     }
     if reserved.len() > MAX_RESERVED_RANGES {
-        return Err(PmmError::TooManyReservedRanges);
+        return Err(PmmError::TooManyReserveds);
     }
 
     // Frame-aligned view of the usable regions and the span they cover.
@@ -279,12 +276,12 @@ pub fn init(regions: &[MemoryRegion], reserved: &[ReservedRange]) -> Result<(), 
     let mut ram_end = 0usize;
     let mut frames_total = 0usize;
     for region in regions {
-        let start = align_up(region.base, FRAME_SIZE);
-        let end = align_down(region.base + region.size, FRAME_SIZE);
+        let start = align_up(region.start().as_usize(), FRAME_SIZE);
+        let end = align_down(region.end().as_usize(), FRAME_SIZE);
         if start >= end {
             continue;
         }
-        mmu::map_normal(start, end - start).map_err(PmmError::MappingFailed)?;
+        mmu::map_normal(PhysRange::from_bounds(PhysAddr::new(start), PhysAddr::new(end))).map_err(PmmError::MappingFailed)?;
         ram_base = ram_base.min(start);
         ram_end = ram_end.max(end);
         frames_total += (end - start) / FRAME_SIZE;
@@ -294,10 +291,10 @@ pub fn init(regions: &[MemoryRegion], reserved: &[ReservedRange]) -> Result<(), 
     }
 
     // Reserved ranges are rounded outwards to whole frames.
-    let mut all_reserved: [ReservedRange; MAX_RESERVED_RANGES + 1] =
-        [ReservedRange { start: 0, end: 0 }; MAX_RESERVED_RANGES + 1];
+    let mut all_reserved: [Reserved; MAX_RESERVED_RANGES + 1] =
+        [Reserved { start: 0, end: 0 }; MAX_RESERVED_RANGES + 1];
     for (slot, r) in all_reserved.iter_mut().zip(reserved) {
-        *slot = ReservedRange { start: align_down(r.start, FRAME_SIZE), end: align_up(r.end, FRAME_SIZE) };
+        *slot = Reserved::covering(*r);
     }
     let reserved_count = reserved.len();
 
@@ -305,8 +302,8 @@ pub fn init(regions: &[MemoryRegion], reserved: &[ReservedRange]) -> Result<(), 
     let span_frames = (ram_end - ram_base) / FRAME_SIZE;
     let meta_len = align_up(span_frames * core::mem::size_of::<FrameState>(), FRAME_SIZE);
     let meta_start = find_metadata_area(regions, &all_reserved[..reserved_count], meta_len)
-        .ok_or(PmmError::ReservedRegionOutOfRange)?;
-    all_reserved[reserved_count] = ReservedRange { start: meta_start, end: meta_start + meta_len };
+        .ok_or(PmmError::NoRoomForMetadata)?;
+    all_reserved[reserved_count] = Reserved { start: meta_start, end: meta_start + meta_len };
     let all_reserved = &all_reserved[..=reserved_count];
 
     // SAFETY: [meta_start, meta_start + meta_len) lies inside a region that was
@@ -330,8 +327,8 @@ pub fn init(regions: &[MemoryRegion], reserved: &[ReservedRange]) -> Result<(), 
     };
 
     for region in regions {
-        let start = align_up(region.base, FRAME_SIZE);
-        let end = align_down(region.base + region.size, FRAME_SIZE);
+        let start = align_up(region.start().as_usize(), FRAME_SIZE);
+        let end = align_down(region.end().as_usize(), FRAME_SIZE);
         if start < end {
             free_unreserved_ranges(&mut pmm, start, end, all_reserved);
         }
@@ -344,7 +341,7 @@ pub fn init(regions: &[MemoryRegion], reserved: &[ReservedRange]) -> Result<(), 
 /// Walks `[start, end)`, inserting every maximal aligned power-of-two-sized
 /// free run into the buddy free lists, skipping bytes covered by any range in
 /// `reserved`. Block alignment is relative to the PMM's base address.
-fn free_unreserved_ranges(pmm: &mut Pmm, start: usize, end: usize, reserved: &[ReservedRange]) {
+fn free_unreserved_ranges(pmm: &mut Pmm, start: usize, end: usize, reserved: &[Reserved]) {
     let ram_base = pmm.base_addr;
     let mut cursor = start;
     while cursor < end {
@@ -382,7 +379,7 @@ fn free_unreserved_ranges(pmm: &mut Pmm, start: usize, end: usize, reserved: &[R
             let order = align_order.min(size_order).min(MAX_ORDER);
             let block_bytes = FRAME_SIZE << order;
 
-            pmm.push_free(order, PhysFrame::from_addr(addr));
+            pmm.push_free(order, frame_at(addr));
             pmm.frames_free += 1usize << order;
             addr += block_bytes;
         }
@@ -392,34 +389,35 @@ fn free_unreserved_ranges(pmm: &mut Pmm, start: usize, end: usize, reserved: &[R
 }
 
 /// Allocates `2^order` contiguous, [`FRAME_SIZE`]-aligned frames.
-pub fn alloc_frames(order: usize) -> Result<Option<PhysFrame>, PmmError> {
+pub fn alloc_frames(order: usize) -> Result<PhysFrame, PmmError> {
     if order > MAX_ORDER {
         return Err(PmmError::OrderTooLarge);
     }
     let mut guard = PMM.lock();
     let pmm = guard.as_mut().ok_or(PmmError::NotReady)?;
-    Ok(pmm.alloc(order))
+    pmm.alloc(order).ok_or(PmmError::OutOfMemory)
 }
 
 /// Allocates a single [`FRAME_SIZE`] frame. Convenience for `alloc_frames(0)`.
-pub fn alloc_frame() -> Result<Option<PhysFrame>, PmmError> {
+pub fn alloc_frame() -> Result<PhysFrame, PmmError> {
     alloc_frames(0)
 }
 
 /// Frees a block of `2^order` frames previously returned by
 /// [`alloc_frames`] with the same `order`.
 pub fn free_frames(frame: PhysFrame, order: usize) -> Result<(), PmmError> {
-    {
-        let guard = PMM.lock();
-        let pmm = guard.as_ref().ok_or(PmmError::NotReady)?;
-        pmm.validate_free(frame, order)?;
-    }
-
-    let len = FRAME_SIZE << order;
-    mmu::remap_normal(frame.addr(), len).map_err(PmmError::MappingFailed)?;
-
+    // One lock for the whole operation, so the frame cannot be freed or
+    // reallocated by someone else between validating it and releasing it.
+    // (The MMU's own lock is separate and never calls back into the PMM.)
     let mut guard = PMM.lock();
     let pmm = guard.as_mut().ok_or(PmmError::NotReady)?;
+    pmm.validate_free(frame, order)?;
+
+    // A caller may have remapped the block (e.g. non-cacheable for DMA); hand
+    // it back as ordinary memory.
+    let block = PhysRange::new(frame.addr(), FRAME_SIZE << order);
+    mmu::remap_normal(block).map_err(PmmError::MappingFailed)?;
+
     pmm.free(frame, order)
 }
 

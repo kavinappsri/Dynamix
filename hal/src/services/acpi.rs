@@ -9,7 +9,9 @@
 
 use core::ptr::NonNull;
 
-use crate::services::device_query::{DeviceQuery, DeviceResource, MemoryRegion};
+use crate::services::addr::{PhysAddr, PhysRange};
+use crate::services::device_query::{DeviceQuery, DeviceResource};
+use crate::services::mmu;
 
 use acpi::{AcpiError, AcpiTable, AcpiTables};
 use acpi::handler::{AcpiHandler, PhysicalMapping};
@@ -20,9 +22,10 @@ pub struct DynamixAcpiHandler;
 
 impl AcpiHandler for DynamixAcpiHandler {
     unsafe fn map_physical_region<T>(&self, physical_address: usize, size: usize) -> PhysicalMapping<Self, T> {
-        #[cfg(target_arch = "x86_64")]
-        if crate::x86_64::x64_mmu::root().is_some() {
-            crate::services::mmu::map_normal(physical_address, size).expect("failed to map an ACPI table");
+        // Before the kernel's own page tables exist, firmware's identity map
+        // still covers the tables, so there is nothing to map yet.
+        if mmu::is_ready() {
+            mmu::map_normal(PhysRange::new(PhysAddr::new(physical_address), size)).expect("failed to map an ACPI table");
         }
 
         unsafe {
@@ -64,6 +67,9 @@ pub struct AcpiQuery {
 
 impl AcpiQuery {
     /// Builds an `AcpiQuery` from the RSDP's physical address.
+    ///
+    /// # Safety
+    /// `rdsp_address` must point to a valid mapped adress where rdsp is present
     pub unsafe fn from_rsdp(rsdp_address: usize) -> Result<Self, AcpiQueryError> {
         // SAFETY: upheld by this function's own contract.
         let tables = unsafe { AcpiTables::from_rsdp(DynamixAcpiHandler, rsdp_address)? };
@@ -71,15 +77,19 @@ impl AcpiQuery {
     }
 
     /// Re-reads the root table (RSDT/XSDT) through the live page tables.
+    ///
+    /// # Safety
+    /// The new MMU page tables must be present, and `rdsp_adress`
+    /// must still be a valid address holding the `rdsp`
     pub unsafe fn remap(&mut self) -> Result<(), AcpiQueryError> {
         // SAFETY: upheld by this function's own contract.
         self.tables = unsafe { AcpiTables::from_rsdp(DynamixAcpiHandler, self.rsdp_address)? };
         Ok(())
     }
 
-    /// Physical `(address, length)` of the whole DSDT, SDT header included.
-    pub fn dsdt_aml(&self) -> Option<(usize, usize)> {
-        self.tables.dsdt().ok().map(|table| (table.address, table.length as usize))
+    /// Physical range of the whole DSDT, SDT header included.
+    pub fn dsdt_aml(&self) -> Option<PhysRange> {
+        self.tables.dsdt().ok().map(|table| PhysRange::new(PhysAddr::new(table.address), table.length as usize))
     }
 
     /// The ACPI revision reported by the RSDP (`0` for ACPI 1.0, using the
@@ -114,25 +124,18 @@ impl AcpiQuery {
     /// type is declared, not where it is. TODO: replace with real
     /// `_HID`/`_CRS` walk once the `aml` interpreter exists.
     fn dsdt_declares(&self, hid: &str, eisa: &[u8]) -> bool {
-        let Some((phys, len)) = self.dsdt_aml() else { return false };
-        if crate::services::mmu::map_normal(phys, len).is_err() {
+        let Some(range) = self.dsdt_aml() else { return false };
+        if mmu::map_normal(range).is_err() {
             return false;
         }
         // SAFETY: the DSDT was just mapped and firmware keeps it alive.
-        let aml = unsafe { core::slice::from_raw_parts(phys as *const u8, len) };
+        let aml = unsafe { core::slice::from_raw_parts(range.start().as_usize() as *const u8, range.len()) };
         aml.windows(eisa.len()).any(|w| w == eisa)
             || aml.windows(hid.len()).any(|w| w == hid.as_bytes())
     }
 }
 
 impl DeviceQuery for AcpiQuery {
-    fn find_compatible_address(&self, _compatible: &str) -> Option<(usize, usize)> {
-        // ACPI has no `compatible`-string equivalent for arbitrary platform
-        // devices; that lookup goes through `_HID`/`_CID` in the AML
-        // namespace, which this service CURRENTLY doesn't support
-        None
-    }
-
     fn find_compatible_resource(&self, compatible: &str) -> Option<DeviceResource> {
         // Stopgap until AML is interpreted: a declared 16550 UART is assumed to
         // sit at the legacy COM1 ports, which is where QEMU and PCs put it.
@@ -140,11 +143,6 @@ impl DeviceQuery for AcpiQuery {
             HID_NS16550 if self.dsdt_declares(HID_NS16550, &AML_EISA_PNP0501) => Some(LEGACY_COM1),
             _ => None,
         }
-    }
-
-    fn memory_regions(&self, _out: &mut [MemoryRegion]) -> usize {
-        // ACPI's static tables don't describe usable RAM
-        0
     }
 
     fn as_acpi(&self) -> Option<&AcpiQuery> {

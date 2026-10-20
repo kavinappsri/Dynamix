@@ -8,7 +8,7 @@ test = false
 bench = false
 
 [features]
-default = ["board-qemu-virt"]
+default = []
 
 board-qemu-virt = ["driver-pl011", "driver-fw-cfg", "driver-ramfb"]
 board-rk3126 = ["driver-dw-8250", "driver-rk3126-cru", "driver-rk3126-vop"]

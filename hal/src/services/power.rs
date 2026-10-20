@@ -1,6 +1,6 @@
 //! Provides Power related functions
 
-use crate::services::boot_info::DeviceTree;
+use crate::services::boot_info::HardwareDescription;
 
 /// Why the power system could not be set up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -10,14 +10,14 @@ pub enum PowerError {
     /// The description exists but names something this kernel cannot drive.
     Unsupported,
     /// The platform description is present but malformed.
-    BadDeviceTree,
+    BadHardwareDescription,
     /// Power control was used before `init` succeeded.
     NotInitialized,
 }
 
 /// Sets up the power system from the platform description:
 /// PSCI node on aarch64/armv7, FADT + DSDT `\_S5` on x86_64.
-pub fn init(tree: &DeviceTree<'_>) -> Result<(), PowerError> {
+pub fn init(tree: &HardwareDescription<'_>) -> Result<(), PowerError> {
     #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
     {
         use crate::services::device_query::DeviceQuery;

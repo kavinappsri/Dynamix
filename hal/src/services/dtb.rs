@@ -5,7 +5,8 @@
 //! device-tree implementation: `reg` decoding supports common one- and
 //! two-cell address/size pairs and compatible matching is string-based.
 
-use crate::services::device_query::{DeviceQuery, MemoryRegion};
+use crate::services::addr::{PhysAddr, PhysRange};
+use crate::services::device_query::{DeviceQuery, DeviceResource};
 
 const FDT_MAGIC: u32 = 0xD00DFEED;
 
@@ -85,13 +86,28 @@ impl<'a> Dtb<'a> {
         self.nodes().find(|&node| node.name().contains(name_part))
     }
     
-    /// Finds the address of the first node compatible with `compatible`
-    /// 
+    /// Finds the register range of the first node compatible with `compatible`
+    ///
     /// Extension of the [`Dtb::find_compatible()`] method
-    pub fn find_compatible_address(&self, compatible: &str) -> Option<(usize, usize)> {
+    pub fn find_compatible_range(&self, compatible: &str) -> Option<PhysRange> {
         Dtb::find_compatible(self, compatible)
             .and_then(|node| node.reg())
-            .map(|(base, size)| (base as usize, size as usize) )
+            .map(|(base, size)| PhysRange::new(PhysAddr::new(base as usize), size as usize))
+    }
+
+    /// Writes the RAM regions the tree describes into `out`; returns how many.
+    pub fn memory_regions(&self, out: &mut [PhysRange]) -> usize {
+        if out.is_empty() {
+            return 0;
+        }
+
+        match self.find_node("memory").and_then(|node| node.reg()) {
+            Some((base, size)) => {
+                out[0] = PhysRange::new(PhysAddr::new(base as usize), size as usize);
+                1
+            }
+            None => 0,
+        }
     }
 
     /// Returns an iterator that walks all begin-node tokens in tree order.
@@ -140,8 +156,9 @@ impl<'a> Dtb<'a> {
         self.find_path(path)
     }
 
-    pub fn physical_range(&self) -> (usize, usize) {
-        (self.slice.as_ptr() as usize, self.slice.len())
+    /// The range the blob itself occupies.
+    pub fn physical_range(&self) -> PhysRange {
+        PhysRange::new(PhysAddr::new(self.slice.as_ptr() as usize), self.slice.len())
     }
 }
 
@@ -187,6 +204,9 @@ impl<'a> Node<'a> {
             let token = read_be_u32(self.dtb.slice, curr);
             curr += 4;
 
+
+            // the patterns r present for explicitness
+            #[allow(clippy::wildcard_in_or_patterns)]
             match token {
                 FDT_PROP => {
                     let len = read_be_u32(self.dtb.slice, curr) as usize;
@@ -319,6 +339,8 @@ impl<'a> Iterator for NodeIterator<'a> {
             let token = read_be_u32(self.dtb.slice, self.curr_offset);
             self.curr_offset += 4;
 
+            // the patterns r present for explicitness
+            #[allow(clippy::wildcard_in_or_patterns)]
             match token {
                 FDT_BEGIN_NODE => {
                     let name_start = self.curr_offset;
@@ -391,27 +413,11 @@ fn read_be_u32(slice: &[u8], offset: usize) -> u32 {
 }
 
 impl<'a> DeviceQuery for Dtb<'a> {
-    fn find_compatible_address(&self, compatible: &str) -> Option<(usize, usize)> {
-        Dtb::find_compatible_address(self, compatible)
-    }
-
-    fn memory_regions(&self, out: &mut [MemoryRegion]) -> usize {
-        if out.is_empty() {
-            return 0;
-        }
-        
-        match self.find_node("memory").and_then(|node| node.reg()) {
-            Some((base, size)) => {
-                out[0] = MemoryRegion { base: base as usize, size: size as usize };
-                1
-            }
-            None => 0,
-        }
+    fn find_compatible_resource(&self, compatible: &str) -> Option<DeviceResource> {
+        self.find_compatible_range(compatible).map(|range| DeviceResource::Mmio { range })
     }
 
     fn as_dtb(&self) -> Option<&Dtb<'_>> {
         Some(self)
     }
 }
-
- 

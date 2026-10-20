@@ -71,7 +71,7 @@ SECTIONS
     {
         . = ALIGN(16);
         _stack_bottom = .;
-        . += 4096;
+        . += 16384;
         . = ALIGN(16);
         _stack_top = .;
     }

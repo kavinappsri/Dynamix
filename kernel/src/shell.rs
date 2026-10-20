@@ -1,13 +1,11 @@
 //! The UART shell: a command loop over the serial console that can change the
 //! display and shut the machine down.
-//!
-//! Parked behind the `drivers` feature until the driver subsystem is back on
-//! every architecture (Phase 4, step 13).
+
+use core::fmt::Write;
 
 use crate::console::Console;
 use crate::logo;
 use hal::driver_traits::framebuffer::Framebuffer;
-use hal::services::pmm::PmmError;
 
 /// Runs the command loop forever.
 pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
@@ -26,8 +24,12 @@ pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
             b"logo" => {
                 display.fill(0x00_00_00_00);
 
-                logo::draw_centered(display).expect("Failed to draw boot logo");
-                console.writeln("Displaying Dynamix Boot Logo");
+                match logo::draw_centered(display) {
+                    Ok(()) => console.writeln("Displaying Dynamix Boot Logo"),
+                    Err(e) => {
+                        let _ = writeln!(console, "Cannot draw the boot logo: {e:?}");
+                    }
+                }
             }
             b"red" => {
                 display.fill(0x00_FF_00_00);
@@ -58,46 +60,14 @@ pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
 
                 hal::services::power::system_off();
             }
-            b"pmm-stats" => {
-                let stats = hal::services::pmm::stats();
-                match stats {
-                    Err(e) => {
-                        console.writeln("ERROR!");
-                        console.write("PmmError::");
-                        match e {
-                            PmmError::AlreadyInitialized => {console.writeln("Already initialized");}
-                            PmmError::NotReady => {console.writeln("Not ready");}
-                            PmmError::ReservedRegionOutOfRange => {console.writeln("Reserved region out of range");}
-                            PmmError::MappingFailed(_) => {console.writeln("MappingFailed");}
-                            PmmError::OrderTooLarge => {console.writeln("Order too large");}
-                            PmmError::TooManyReservedRanges => {console.writeln("TooMany reserved ranges");}
-                            PmmError::InvalidFree => {console.writeln("Invalid free");}
-                            PmmError::NoMemory => {console.writeln("No memory");}
-                        }
-                    }
-                    Ok((free, total)) => {
-
-                        fn usize_to_str(mut num: usize, buf: &mut [u8; 20]) -> &str {
-                            if num == 0 { return "0"; }
-                            let mut i = 20;
-                            while num > 0 {
-                                i -= 1;
-                                buf[i] = b'0' + (num % 10) as u8;
-                                num /= 10;
-                            }
-                            core::str::from_utf8(&buf[i..]).unwrap()
-                        }
-
-                        let mut buf = [0u8;20];
-
-                        console.writeln("Pmm stats:");
-                        console.write("free frames: ");
-                        console.writeln(usize_to_str(free, &mut buf));
-                        console.write("total frames: ");
-                        console.writeln(usize_to_str(total, &mut buf));
-                    }
+            b"pmm-stats" => match hal::services::pmm::stats() {
+                Ok((free, total)) => {
+                    let _ = writeln!(console, "Pmm stats:\nfree frames: {free}\ntotal frames: {total}");
                 }
-            }
+                Err(e) => {
+                    let _ = writeln!(console, "ERROR!\n{e:?}");
+                }
+            },
             _ => console.writeln("Unrecognized Command"),
         }
 

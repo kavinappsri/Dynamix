@@ -3,6 +3,7 @@
 //! On-demand mapping of additional physical memory into TTBR0. Can be
 //! mapped as either device or normal
 
+use crate::services::addr::{PhysAddr, PhysRange};
 use crate::services::mmu::MmuError;
 use core::arch::asm;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -66,7 +67,7 @@ const DESC_DEVICE: u32 = 0;
 
 
 /// Converts a higher-half kernel address to its physical address.
-pub fn va_to_pa(address: u32) -> u32 {
+fn to_phys(address: u32) -> u32 {
     address.wrapping_sub(KERNEL_VIRTUAL_OFFSET.load(Ordering::Relaxed))
 }
 
@@ -181,7 +182,7 @@ fn l2_table_at_or_alloc<'a>(
         (entry & 0xFFFF_FC00) as *mut L2Table
     } else if entry & 0b11 == 0 {
         let new_table = alloc.alloc_table().ok_or(MmuError::OutOfTableSpace)?;
-        root.0[idx] = va_to_pa(new_table as u32) | L1_DESC_TABLE;
+        root.0[idx] = to_phys(new_table as u32) | L1_DESC_TABLE;
         new_table
     } else {
         // Entry is already a 1MB section descriptor covering this index;
@@ -222,27 +223,27 @@ pub fn init() -> Result<(), MmuError> {
 
 /// Identity-maps `len` bytes of ordinary (cacheable) memory starting at
 /// the physical address `phys`
-pub fn map_normal(phys: u32, len: u32) -> Result<(), MmuError> {
+fn map_normal_raw(phys: u32, len: u32) -> Result<(), MmuError> {
     map_impl(phys, len, MemType::Normal)
 }
 
 /// Identity-maps `len` bytes of Normal, non-cacheable memory starting at
 /// the physical address `phys`
-pub fn map_normal_nc(phys: u32, len: u32) -> Result<(), MmuError> {
+fn map_normal_nc_raw(phys: u32, len: u32) -> Result<(), MmuError> {
     map_impl(phys, len, MemType::NormalNonCacheable)
 }
 
 /// Identity-maps `len` bytes of device (MMIO) memory starting at the
 /// physical address `phys`
-pub fn map_device(phys: u32, len: u32) -> Result<(), MmuError> {
+fn map_device_raw(phys: u32, len: u32) -> Result<(), MmuError> {
     map_impl(phys, len, MemType::Device)
 }
 
-pub fn remap_normal_nc(phys: u32, len: u32) -> Result<(), MmuError> {
+fn remap_normal_nc_raw(phys: u32, len: u32) -> Result<(), MmuError> {
     remap_impl(phys, len, MemType::NormalNonCacheable)
 }
 
-pub fn remap_normal(phys: u32, len: u32) -> Result<(), MmuError> {
+fn remap_normal_raw(phys: u32, len: u32) -> Result<(), MmuError> {
     remap_impl(phys, len, MemType::Normal)
 }
 
@@ -339,7 +340,7 @@ fn remap_range(root: &mut L1Table, alloc: &mut TableBumpAllocator, start: u32, l
                     (*l2_table).0[i] = page_pa | L2_DESC_SMALL_PAGE | DESC_AP_FULL_PAGE | old_page_bits;
                 }
             }
-            root.0[l1_idx] = va_to_pa(l2_table as u32) | L1_DESC_TABLE;
+            root.0[l1_idx] = to_phys(l2_table as u32) | L1_DESC_TABLE;
 
             let span_in_section = remaining_in_section.min(len - offset);
             let l2_table = unsafe { &mut *l2_table };
@@ -391,4 +392,65 @@ fn invalidate_range(start: u32, len: u32) {
         }
         asm!("dsb", "isb", options(nostack));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Service-facing API (same names and signatures as the other architectures)
+// ---------------------------------------------------------------------------
+
+fn raw(range: PhysRange) -> (u32, u32) {
+    (range.start().as_usize() as u32, range.len() as u32)
+}
+
+/// Maps `range` as device memory.
+pub fn map_device(range: PhysRange) -> Result<(), MmuError> {
+    let (phys, len) = raw(range);
+    map_device_raw(phys, len)
+}
+
+/// Maps `range` as ordinary cacheable memory.
+pub fn map_normal(range: PhysRange) -> Result<(), MmuError> {
+    let (phys, len) = raw(range);
+    map_normal_raw(phys, len)
+}
+
+/// Maps `range` as non-cacheable memory.
+pub fn map_normal_nc(range: PhysRange) -> Result<(), MmuError> {
+    let (phys, len) = raw(range);
+    map_normal_nc_raw(phys, len)
+}
+
+/// Changes an already mapped range to ordinary cacheable memory.
+pub fn remap_normal(range: PhysRange) -> Result<(), MmuError> {
+    let (phys, len) = raw(range);
+    remap_normal_raw(phys, len)
+}
+
+/// Changes an already mapped range to non-cacheable memory.
+pub fn remap_normal_nc(range: PhysRange) -> Result<(), MmuError> {
+    let (phys, len) = raw(range);
+    remap_normal_nc_raw(phys, len)
+}
+
+/// Converts a kernel virtual address to its physical address.
+pub fn va_to_pa(address: usize) -> usize {
+    to_phys(address as u32) as usize
+}
+
+/// Physical range of the kernel image, including its boot stack and tables.
+pub fn kernel_image_range() -> PhysRange {
+    unsafe extern "C" {
+        static _kernel_vma_start: u8;
+        static _kernel_vma_end: u8;
+    }
+
+    // This unsafe is actually needed, removing it will raise errors.
+    #[allow(unused_unsafe)]
+    let (start, end) = unsafe { ((&raw const _kernel_vma_start) as usize, (&raw const _kernel_vma_end) as usize) };
+    PhysRange::from_bounds(PhysAddr::new(va_to_pa(start)), PhysAddr::new(va_to_pa(end)))
+}
+
+/// Whether the `map_*` functions can be used yet.
+pub fn is_ready() -> bool {
+    MMU_STATE_READY.load(Ordering::Acquire) == 1
 }

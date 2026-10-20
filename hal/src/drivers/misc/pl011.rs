@@ -18,9 +18,12 @@ impl Pl011Uart {
     const FLAG_TRANSMIT_FULL: u32 = 1 << 5;
 
     /// Creates a UART from its mapped register base.
+    ///
+    /// # Safety
+    /// `base` must be a valid mapped mmio address to this
+    /// device
     pub const unsafe fn new(base: usize) -> Self {
         Self {
-            // SAFETY: upheld by this constructor's contract.
             registers: unsafe { Mmio::new(base) },
         }
     }

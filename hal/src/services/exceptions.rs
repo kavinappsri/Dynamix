@@ -6,10 +6,10 @@ use crate::aarch64;
 #[cfg(target_arch = "arm")]
 use crate::armv7;
 
-use crate::services::boot_info::RawFramebufferInfo;
+use crate::services::framebuffer::FirmwareFramebuffer;
 use crate::services::sync::StaticCell;
 
-static FAULT_FRAMEBUFFER: StaticCell<RawFramebufferInfo> = StaticCell::uninit();
+static FAULT_FRAMEBUFFER: StaticCell<FirmwareFramebuffer> = StaticCell::uninit();
 
 /// Writes the exception vector table / descriptor tables
 pub fn init() {
@@ -23,13 +23,13 @@ pub fn init() {
     crate::x86_64::x64_exceptions::init();
 }
 
-/// Registers a (mapped) framebuffer the fault reporter may paint when an
-/// exception is fatal. Only the first call counts.
-pub fn set_fault_framebuffer(framebuffer: RawFramebufferInfo) {
+/// Registers a (mapped) framebuffer to paint when something fatal happens: an
+/// exception, or a kernel panic. Only the first call counts.
+pub fn set_fault_framebuffer(framebuffer: FirmwareFramebuffer) {
     FAULT_FRAMEBUFFER.get_or_init(|| framebuffer);
 }
 
-#[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
-pub(crate) fn fault_framebuffer() -> Option<&'static RawFramebufferInfo> {
+/// The framebuffer registered with [`set_fault_framebuffer`], if any.
+pub fn fault_framebuffer() -> Option<&'static FirmwareFramebuffer> {
     FAULT_FRAMEBUFFER.get()
 }

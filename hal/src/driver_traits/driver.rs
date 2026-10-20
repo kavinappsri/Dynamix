@@ -24,7 +24,6 @@
 //!   `.drv$<k>2` another marker. The entries are exactly what lies between the
 //!   two markers.
 
-use crate::services::dtb::Dtb;
 use crate::services::device_query::{DeviceQuery, DeviceResource};
 
 
@@ -97,8 +96,8 @@ pub fn probe_driver<D: 'static + ?Sized>(start_tag: *const u8, stop_tag: *const 
     for driver in drivers {
         if let Some(resource) = tree.find_compatible_resource(driver.compatible) {
             // Only memory needs mapping
-            if let DeviceResource::Mmio { base, size } = resource {
-                crate::services::mmu::map_device(base, size).map_err(|_| DriverProbeError::MappingFailed)?;
+            if let DeviceResource::Mmio { range } = resource {
+                crate::services::mmu::map_device(range).map_err(|_| DriverProbeError::MappingFailed)?;
             }
             let initialized_driver = (driver.init)(resource, tree)?;
             return Ok(initialized_driver);

@@ -3,7 +3,7 @@
 
 #macOS
 .DS_Store
-*.MACOSX
+*.__MACOSX/
 
 # Python
 __pycache__/
@@ -28,4 +28,7 @@ Archive.zip
 digest.txt
 ovmf/
 /esp/
+*.bin
 
+
+/Cargo.lock

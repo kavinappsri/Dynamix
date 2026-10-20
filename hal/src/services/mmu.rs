@@ -1,11 +1,14 @@
-//! Mmu Services Abstraction
-
+//! MMU services, forwarded to the architecture backend.
+//!
+//! Every backend (`aarch64_mmu`, `armv7_mmu`, `x64_mmu`) exposes the same
+//! functions with the same signatures, so this module is just a re-export
+//! plus the shared error type.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MmuError {
-    /// [`mmu::init()`] was either not called or failed
+    /// [`init()`] was either not called or failed
     MmuNotReady,
-    /// [`mmu::init()`] was already called
+    /// [`init()`] was already called
     AlreadyInitialized,
     /// No More memory for page tables (use the allocator or increase size)
     OutOfTableSpace,
@@ -13,179 +16,33 @@ pub enum MmuError {
     NotMapped,
     /// The range is malformed or outside what the architecture can map.
     InvalidRange,
+    /// Part of the range is already mapped with a different memory type.
+    TypeConflict,
 }
 
+#[cfg(target_arch = "aarch64")]
+use crate::aarch64::aarch64_mmu as arch;
+#[cfg(target_arch = "arm")]
+use crate::armv7::armv7_mmu as arch;
 #[cfg(target_arch = "x86_64")]
-use crate::x86_64::x64_mmu::{self as x86_mmu, MemKind, PagingError};
+use crate::x86_64::x64_mmu as arch;
 
-#[cfg(target_arch = "x86_64")]
-fn from_paging(error: PagingError) -> MmuError {
-    match error {
-        PagingError::OutOfTableSpace => MmuError::OutOfTableSpace,
-        PagingError::NotInstalled => MmuError::MmuNotReady,
-        PagingError::AlreadyInstalled => MmuError::AlreadyInitialized,
-        PagingError::NotMapped => MmuError::NotMapped,
-        PagingError::AddressTooHigh | PagingError::Misaligned | PagingError::BadImage => MmuError::InvalidRange,
-    }
-}
-
-pub fn init() -> Result<(), MmuError> {
-    #[cfg(target_arch = "aarch64")]
-    {
-        crate::aarch64::aarch64_mmu::init()
-    }
-    #[cfg(target_arch = "arm")]
-    {
-        crate::armv7::armv7_mmu::init()
-    }
-    #[cfg(target_arch = "x86_64")]
-    {
-        x86_mmu::init().map_err(from_paging)
-    }
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "arm", target_arch = "x86_64")))]
-    {
-        compile_error!("Unsupported architecture");
-    }
-}
-
-pub fn map_device(phys: usize, len: usize) -> Result<(), MmuError> {
-    #[cfg(target_arch = "aarch64")]
-    {
-        crate::aarch64::aarch64_mmu::map_device(phys as u64, len as u64)
-    }
-    #[cfg(target_arch = "arm")]
-    {
-        crate::armv7::armv7_mmu::map_device(phys as u32, len as u32)
-    }
-    #[cfg(target_arch = "x86_64")]
-    {
-        x86_mmu::map_identity(phys as u64, len as u64, MemKind::Device).map_err(from_paging)
-    }
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "arm", target_arch = "x86_64")))]
-    {
-        compile_error!("Unsupported architecture");
-    }
-}
-
-pub fn map_normal(phys: usize, len: usize) -> Result<(), MmuError> {
-    #[cfg(target_arch = "aarch64")]
-    {
-        crate::aarch64::aarch64_mmu::map_normal(phys as u64, len as u64)
-    }
-    #[cfg(target_arch = "arm")]
-    {
-        crate::armv7::armv7_mmu::map_normal(phys as u32, len as u32)
-    }
-    #[cfg(target_arch = "x86_64")]
-    {
-        x86_mmu::map_identity(phys as u64, len as u64, MemKind::Normal).map_err(from_paging)
-    }
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "arm", target_arch = "x86_64")))]
-    {
-        compile_error!("Unsupported architecture");
-    }
-}
-
-pub fn map_normal_nc(phys: usize, len: usize) -> Result<(), MmuError> {
-    #[cfg(target_arch = "aarch64")]
-    {
-        crate::aarch64::aarch64_mmu::map_normal_nc(phys as u64, len as u64)
-    }
-    #[cfg(target_arch = "arm")]
-    {
-        crate::armv7::armv7_mmu::map_normal_nc(phys as u32, len as u32)
-    }
-    #[cfg(target_arch = "x86_64")]
-    {
-        // Write-combining once `init` has programmed the PAT, uncached before that.
-        x86_mmu::map_identity(phys as u64, len as u64, MemKind::NormalNc).map_err(from_paging)
-    }
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "arm", target_arch = "x86_64")))]
-    {
-        compile_error!("Unsupported architecture");
-    }
-}
-
-pub fn va_to_pa(addr: usize) -> usize {
-    #[cfg(target_arch = "aarch64")]
-    {
-        crate::aarch64::aarch64_mmu::va_to_pa(addr as u64) as usize
-    }
-    #[cfg(target_arch = "arm")]
-    {
-        crate::armv7::armv7_mmu::va_to_pa(addr as u32) as usize
-    }
-    #[cfg(target_arch = "x86_64")]
-    {
-        x86_mmu::va_to_pa(addr as u64) as usize
-    }
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "arm", target_arch = "x86_64")))]
-    {
-        compile_error!("Unsupported architecture");
-    }
-}
-
-/// Changes an already mapped range to normal non cacheable attributes
-pub fn remap_normal_nc(phys: usize, len: usize) -> Result<(), MmuError> {
-    #[cfg(target_arch = "aarch64")]
-    {
-        crate::aarch64::aarch64_mmu::remap_normal_nc(phys as u64, len as u64)
-    }
-    #[cfg(target_arch = "arm")]
-    {
-        crate::armv7::armv7_mmu::remap_normal_nc(phys as u32, len as u32)
-    }
-    #[cfg(target_arch = "x86_64")]
-    {
-        x86_mmu::remap_identity(phys as u64, len as u64, MemKind::Normal).map_err(from_paging)
-    }
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "arm", target_arch = "x86_64")))]
-    {
-        compile_error!("Unsupported architecture");
-    }
-}
-
-/// Changes an already mapped range to normal attribute
-pub fn remap_normal(phys: usize, len: usize) -> Result<(), MmuError> {
-    #[cfg(target_arch = "aarch64")]
-    {
-        crate::aarch64::aarch64_mmu::remap_normal(phys as u64, len as u64)
-    }
-    #[cfg(target_arch = "arm")]
-    {
-        crate::armv7::armv7_mmu::remap_normal(phys as u32, len as u32)
-    }
-    #[cfg(target_arch = "x86_64")]
-    {
-        x86_mmu::remap_identity(phys as u64, len as u64, MemKind::NormalNc).map_err(from_paging)
-    }
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "arm", target_arch = "x86_64")))]
-    {
-        compile_error!("Unsupported architecture");
-    }
-}
-
-/// Physical `[start, end)` of the kernel image, including its boot stack and
-/// static tables. Must be reserved from the physical allocator; on x86_64 UEFI
-/// already keeps it out of the usable memory map, so this is belt and braces.
-pub fn kernel_image_range() -> (usize, usize) {
-    #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
-    {
-        unsafe extern "C" {
-            static _kernel_vma_start: u8;
-            static _kernel_vma_end: u8;
-        }
-        // SAFETY: linker-provided symbols; only their addresses are used.
-        unsafe { (va_to_pa((&raw const _kernel_vma_start) as usize), va_to_pa((&raw const _kernel_vma_end) as usize)) }
-    }
-    #[cfg(target_arch = "x86_64")]
-    {
-        crate::x86_64::boot_paging::image_range()
-            .map(|(base, size)| (base as usize, (base + size) as usize))
-            .unwrap_or((0, 0))
-    }
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "arm", target_arch = "x86_64")))]
-    {
-        compile_error!("Unsupported architecture");
-    }
-}
+/// Brings the MMU (or the CPU-side paging setup) to its working state.
+pub use arch::init;
+/// Whether the `map_*` functions can be used yet.
+pub use arch::is_ready;
+/// Maps a range as device memory (identity mapped).
+pub use arch::map_device;
+/// Maps a range as ordinary cacheable memory (identity mapped).
+pub use arch::map_normal;
+/// Maps a range as non-cacheable memory (identity mapped).
+pub use arch::map_normal_nc;
+/// Changes an already mapped range to ordinary cacheable memory.
+pub use arch::remap_normal;
+/// Changes an already mapped range to non-cacheable memory.
+pub use arch::remap_normal_nc;
+/// Converts a kernel virtual address to its physical address.
+pub use arch::va_to_pa;
+/// Physical range of the kernel image, including its boot stack and static
+/// tables. Must be reserved from the physical allocator.
+pub use arch::kernel_image_range;

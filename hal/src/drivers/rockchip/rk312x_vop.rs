@@ -17,6 +17,7 @@ use crate::register_driver;
 use crate::services::sync::StaticCell;
 use crate::driver_traits::driver::Driver;
 use crate::services::device_query::DeviceQuery;
+use crate::services::addr::PhysRange;
 use crate::services::pmm;
 use crate::services::mmu;
 // --- Register Offsets ---
@@ -170,14 +171,12 @@ impl Rk312xVop {
         // via `probe_framebuffer`.
         let regs = unsafe { Mmio::new(vop_base) };
 
-        let frame = pmm::alloc_frames(FRAMEBUFFER_ORDER)
-            .map_err(|_| DriverProbeError::MappingFailed)?
-            .ok_or(DriverProbeError::MappingFailed)?;
+        let frame = pmm::alloc_frames(FRAMEBUFFER_ORDER).map_err(|_| DriverProbeError::MappingFailed)?;
 
-        let framebuffer_pa = frame.addr();
-        let len = pmm::FRAME_SIZE << FRAMEBUFFER_ORDER;
+        let framebuffer_pa = frame.addr().as_usize();
+        let buffer = PhysRange::new(frame.addr(), pmm::FRAME_SIZE << FRAMEBUFFER_ORDER);
 
-        if mmu::remap_normal_nc(framebuffer_pa, len).is_err() {
+        if mmu::remap_normal_nc(buffer).is_err() {
             // remap failed
             let _ = pmm::free_frames(frame, FRAMEBUFFER_ORDER);
             return Err(DriverProbeError::MappingFailed);
