@@ -1,0 +1,453 @@
+//! Aarch64 post-boot mmu support
+//!
+//! On Demand mapping of additional physical memory. Can be mappad as both
+//! device or normal
+
+use crate::services::addr::{PhysAddr, PhysRange};
+use crate::services::mmu::MmuError;
+use core::arch::asm;
+use core::sync::atomic::{AtomicU64, Ordering};
+
+unsafe extern "C" {
+    static _boottables_start: u8;
+    static _devicetables_start: u8;
+    static _devicetables_end: u8;
+}
+
+static TTBR0_ROOT: AtomicU64 = AtomicU64::new(0);
+/// Difference between the kernel's higher-half virtual and physical addresses.
+static KERNEL_VIRTUAL_OFFSET: AtomicU64 = AtomicU64::new(0);
+static NEXT_FREE_TABLE: AtomicU64 = AtomicU64::new(0);
+static TABLE_REGION_END: AtomicU64 = AtomicU64::new(0);
+static MMU_STATE_READY: AtomicU64 = AtomicU64::new(0);
+
+
+/// Number of 8-byte descriptors per table (4KB table / 8 bytes each).
+const ENTRIES_PER_TABLE: usize = 512;
+
+/// L2 block descriptor byte size (4KB granule, level 2).
+const L2_BLOCK_SIZE: u64 = 2 * 1024 * 1024; // 2MB
+
+/// L3 page descriptor byte size (4KB granule, level 3).
+const L3_PAGE_SIZE: u64 = 4 * 1024; // 4KB
+
+
+// Descriptor bit definitions (VMSAv8-64, 4KB granule)
+
+const DESC_VALID: u64 = 1 << 0;
+/// Bit 1: 1 = table descriptor (L1/L2) or page descriptor (L3).
+///        0 = block descriptor (L1/L2 only).
+const DESC_TABLE_OR_PAGE: u64 = 1 << 1;
+/// Access flag - must be set or every first access takes an Access Flag fault
+const DESC_AF: u64 = 1 << 10;
+/// Shareability: inner-shareable, required for cache coherency across
+/// cores on normal memory.
+const DESC_SH_INNER: u64 = 0b11 << 8;
+/// MAIR index 0 (programmed by aarch64_boot.s's _mmu_init): normal,
+/// write-back cacheable memory.
+const ATTR_IDX_NORMAL: u64 = 0 << 2;
+/// MAIR index 1: device memory (nGnRnE), used for MMIO mappings.
+const ATTR_IDX_DEVICE: u64 = 1 << 2;
+/// MAIR index 2: Normal non-cacheable memory
+const ATTR_IDX_DEVICE_NC: u64 = 2 << 2;
+
+/// Converts a higher-half kernel address to its physical address.
+///
+/// Translation-table descriptors always contain physical addresses, even
+/// though Rust accesses the tables through their higher-half virtual mapping.
+#[inline]
+fn to_phys(address: u64) -> u64 {
+    address.wrapping_sub(KERNEL_VIRTUAL_OFFSET.load(Ordering::Relaxed))
+}
+
+
+/// A single page-table page: 512 x 8-byte descriptors, 4KB total.
+#[repr(C, align(4096))]
+struct Table([u64; ENTRIES_PER_TABLE]);
+
+
+
+/// Bump allocator over .devicetables region
+struct TableBumpAllocator {
+    next: *mut Table,
+    end: *mut Table,
+}
+
+impl TableBumpAllocator {
+    fn alloc_table(&mut self) -> Option<*mut Table> {
+        if self.next >= self.end {
+            return None;
+        }
+        let table = self.next;
+        unsafe {
+            core::ptr::write_bytes(table, 0, 1);
+            self.next = self.next.add(1);
+        }
+        Some(table)
+    }
+}
+
+/// Memory type for a mapping
+pub enum MemType {
+    Normal,
+    NormalNonCacheable,
+    Device,
+}
+
+impl MemType {
+    const fn descriptor_bits(self) -> u64 {
+        match self {
+            MemType::Normal => ATTR_IDX_NORMAL | DESC_SH_INNER,
+            MemType::NormalNonCacheable => ATTR_IDX_DEVICE_NC | DESC_SH_INNER,
+            MemType::Device => ATTR_IDX_DEVICE,
+        }
+    }
+}
+
+/// Maps `[phys_start, phys_start + len)` to `[virt_start, virt_start + len)`
+fn map_range(
+    root: &mut Table,
+    alloc: &mut TableBumpAllocator,
+    phys_start: u64,
+    virt_start: u64,
+    len: u64,
+    mem_type: MemType,
+) -> Result<(), MmuError> {
+    let attrs = DESC_VALID | DESC_AF | mem_type.descriptor_bits();
+
+    let mut offset = 0u64;
+    while offset < len {
+        let va = virt_start + offset;
+        let pa = phys_start + offset;
+
+        let l1_idx = ((va >> 30) & 0x1FF) as usize;
+        let l2_idx = ((va >> 21) & 0x1FF) as usize;
+
+        let l2_table = table_at_or_alloc(root, l1_idx, alloc)?;
+
+        let remaining = len - offset;
+        let can_use_block =
+            (va.is_multiple_of(L2_BLOCK_SIZE)) && (pa.is_multiple_of(L2_BLOCK_SIZE)) && (remaining >= L2_BLOCK_SIZE);
+
+        if can_use_block {
+            l2_table.0[l2_idx] = pa | attrs;
+            offset += L2_BLOCK_SIZE;
+        } else {
+            let l3_table = table_at_or_alloc(l2_table, l2_idx, alloc)?;
+            let l3_idx = ((va >> 12) & 0x1FF) as usize;
+            l3_table.0[l3_idx] = pa | attrs | DESC_TABLE_OR_PAGE;
+            offset += L3_PAGE_SIZE;
+        }
+    }
+
+    Ok(())
+}
+
+/// Returns the next-level table pointed to by `parent.0[idx]`, allocating
+/// and installing a fresh one if that entry is not yet a valid table
+fn table_at_or_alloc<'a>(
+    parent: &mut Table,
+    idx: usize,
+    alloc: &mut TableBumpAllocator,
+) -> Result<&'a mut Table, MmuError> {
+    let entry = parent.0[idx];
+    let table_ptr = if entry & DESC_VALID != 0 {
+        (entry & 0x0000_FFFF_FFFF_F000) as *mut Table
+    } else {
+        let new_table = alloc.alloc_table().ok_or(MmuError::OutOfTableSpace)?;
+        parent.0[idx] = to_phys(new_table as u64)
+            | DESC_VALID
+            | DESC_TABLE_OR_PAGE;
+        new_table
+    };
+    Ok(unsafe { &mut *table_ptr })
+}
+
+/// Publishes the live `TTBR0_EL1` root
+pub fn init() -> Result<(), MmuError> {
+    if MMU_STATE_READY.compare_exchange(0, u64::MAX, Ordering::AcqRel, Ordering::Acquire).is_err() {
+        return Err(MmuError::AlreadyInitialized);
+    }
+
+    let ttbr0_root: u64;
+    let boottables_start: u64;
+    let devicetables_start: u64;
+    let devicetables_end: u64;
+    unsafe {
+        asm!("mrs {}, ttbr0_el1", out(reg) ttbr0_root, options(nostack, nomem));
+        boottables_start = &raw const _boottables_start as u64;
+        devicetables_start = &raw const _devicetables_start as u64;
+        devicetables_end = &raw const _devicetables_end as u64;
+    }
+
+    let ttbr0_root = ttbr0_root & 0x0000_FFFF_FFFF_F000;
+    TTBR0_ROOT.store(ttbr0_root, Ordering::Relaxed);
+    KERNEL_VIRTUAL_OFFSET.store(boottables_start.wrapping_sub(ttbr0_root), Ordering::Relaxed);
+    NEXT_FREE_TABLE.store(devicetables_start, Ordering::Relaxed);
+    TABLE_REGION_END.store(devicetables_end, Ordering::Relaxed);
+    MMU_STATE_READY.store(1, Ordering::Release);
+
+    Ok(())
+}
+
+/// Identity-maps `len` bytes of ordinary (cacheable) memory starting at
+/// the physical address `phys` -- for RAM regions that are not the
+/// kernel's own image and were not covered by the boot-time mapping
+/// (`_mmu_init`'s fixed 32MB window), most notably the boot DTB blob,
+/// which the bootloader can place anywhere in RAM.
+///
+/// # Errors
+/// Returns [`MmuError::MmuNotReady`] if called before [`init`], or
+/// [`MmuError::OutOfTableSpace`] if the reserved `.devicetables`
+/// region is exhausted.
+fn map_normal_raw(phys: u64, len: u64) -> Result<(), MmuError> {
+    map_impl(phys, len, MemType::Normal)
+}
+
+/// Identity-maps `len` bytes of Normal, non-cacheable memory starting at
+/// the physical address `phys`
+///
+/// # Errors
+/// Returns [`MmuError::MmuNotReady`] if called before [`init`], or
+/// [`MmuError::OutOfTableSpace`] if the reserved `.devicetables`
+/// region is exhausted.
+fn map_normal_nc_raw(phys: u64, len: u64) -> Result<(), MmuError> {
+    map_impl(phys, len, MemType::NormalNonCacheable)
+}
+
+/// Identity-maps `len` bytes of device (MMIO) memory starting at the
+/// physical address `phys`
+fn map_device_raw(phys: u64, len: u64) -> Result<(), MmuError> {
+    map_impl(phys, len, MemType::Device)
+}
+
+/// Changes an already mapped area to normal, non cacheable memory
+fn remap_normal_nc_raw(phys: u64, len: u64) -> Result<(), MmuError> {
+    remap_impl(phys, len, MemType::NormalNonCacheable)
+}
+
+/// Changes an already mapped area to normal memory
+fn remap_normal_raw(phys: u64, len: u64) -> Result<(), MmuError> {
+    remap_impl(phys, len, MemType::Normal)
+}
+
+fn map_impl(phys: u64, len: u64, mem_type: MemType) -> Result<(), MmuError> {
+    if MMU_STATE_READY.load(Ordering::Acquire) != 1 {
+        return Err(MmuError::MmuNotReady);
+    }
+
+    let aligned_phys = phys & !0xFFF;
+    let align_adjust = phys - aligned_phys;
+    let aligned_len = (len + align_adjust + 0xFFF) & !0xFFF;
+
+    let ttbr0_root_ptr = TTBR0_ROOT.load(Ordering::Relaxed) as *mut Table;
+    let next = NEXT_FREE_TABLE.load(Ordering::Relaxed) as *mut Table;
+    let end = TABLE_REGION_END.load(Ordering::Relaxed) as *mut Table;
+
+    let (map_result, new_next) = unsafe {
+        let mut alloc = TableBumpAllocator {next, end};
+        let ttbr0_root = &mut *ttbr0_root_ptr;
+
+        let result = map_range(ttbr0_root, &mut alloc, aligned_phys, aligned_phys, aligned_len, mem_type);
+        (result, alloc.next)
+    };
+
+    NEXT_FREE_TABLE.store(new_next as u64, Ordering::Relaxed);
+
+    invalidate_range(aligned_phys, aligned_len);
+    map_result?;
+
+    Ok(())
+}
+
+fn remap_impl(phys: u64, len: u64, mem_type: MemType) -> Result<(), MmuError> {
+    if MMU_STATE_READY.load(Ordering::Acquire) != 1 {
+        return Err(MmuError::MmuNotReady);
+    }
+
+    let aligned_phys = phys & !0xFFF;
+    let align_adjust = phys - aligned_phys;
+    let aligned_len = (len + align_adjust + 0xFFF) & !0xFFF;
+
+    let ttbr0_root_ptr = TTBR0_ROOT.load(Ordering::Relaxed) as *mut Table;
+    let next = NEXT_FREE_TABLE.load(Ordering::Relaxed) as *mut Table;
+    let end = TABLE_REGION_END.load(Ordering::Relaxed) as *mut Table;
+
+    let (remap_result, new_next) = unsafe {
+        let mut alloc = TableBumpAllocator {next, end};
+        let ttbr0_root = &mut *ttbr0_root_ptr;
+        let result = remap_range(ttbr0_root, &mut alloc, aligned_phys, aligned_len, mem_type);
+        (result, alloc.next)
+    };
+
+    NEXT_FREE_TABLE.store(new_next as u64, Ordering::Relaxed);
+
+    invalidate_range(aligned_phys, aligned_len);
+    remap_result?;
+
+    Ok(())
+}
+
+/// Walks `[start, start + len)` (identity VA == PA, matching `map_range`),
+/// updating attribute bits on existing valid entries only.
+fn remap_range(root: &mut Table, alloc: &mut TableBumpAllocator, start: u64, len: u64, mem_type: MemType, ) -> Result<(), MmuError> {
+    let new_attr_bits = mem_type.descriptor_bits();
+
+    const ATTR_MASK: u64 = (0b111 << 2) | DESC_SH_INNER;
+    let mut offset = 0u64;
+
+    while offset < len {
+        let va = start + offset;
+        let l1_idx = ((va >> 30) & 0x1FF) as usize;
+        let l2_idx = ((va >> 21) & 0x1FF) as usize;
+        let l2_table = existing_table_at(root, l1_idx).ok_or(MmuError::MmuNotReady)?;
+        let l2_entry = l2_table.0[l2_idx];
+
+        if l2_entry & DESC_VALID == 0 {
+            return Err(MmuError::MmuNotReady);
+        }
+
+        let is_block = l2_entry & DESC_TABLE_OR_PAGE == 0;
+
+        if is_block {
+            let block_pa = l2_entry & 0x0000_FFFF_FFFF_F000;
+            let block_va = va & !(L2_BLOCK_SIZE - 1);
+            let remaining_in_block = L2_BLOCK_SIZE - (va - block_va);
+            let covers_whole_block = block_va == va && len - offset >= L2_BLOCK_SIZE;
+
+            if covers_whole_block {
+                l2_table.0[l2_idx] = (l2_entry & !ATTR_MASK) | new_attr_bits;
+                offset += L2_BLOCK_SIZE;
+                continue;
+            }
+
+            // Partial coverage: demote this block to an L3 table
+            let old_attr_bits = l2_entry & ATTR_MASK;
+            let l3_table = alloc.alloc_table().ok_or(MmuError::OutOfTableSpace)?;
+
+            unsafe {
+                for i in 0..ENTRIES_PER_TABLE {
+                    let page_pa = block_pa + (i as u64) * L3_PAGE_SIZE;
+                    (*l3_table).0[i] = page_pa
+                        | DESC_VALID
+                        | DESC_TABLE_OR_PAGE
+                        | DESC_AF
+                        | old_attr_bits;
+                }
+            }
+            l2_table.0[l2_idx] = to_phys(l3_table as u64) | DESC_VALID | DESC_TABLE_OR_PAGE;
+
+            let span_in_block = remaining_in_block.min(len - offset);
+            let l3_table = unsafe { &mut *l3_table };
+            let mut inner_offset = 0u64;
+            while inner_offset < span_in_block {
+                let inner_va = va + inner_offset;
+                let l3_idx = ((inner_va >> 12) & 0x1FF) as usize;
+                l3_table.0[l3_idx] = (l3_table.0[l3_idx] & !ATTR_MASK) | new_attr_bits;
+                inner_offset += L3_PAGE_SIZE;
+            }
+            offset += span_in_block;
+
+        } else {
+            // Already a table
+            let table_ptr = (l2_entry & 0x0000_FFFF_FFFF_F000) as *mut Table;
+            let l3_table = unsafe { &mut *table_ptr };
+            let l3_idx = ((va >> 12) & 0x1FF) as usize;
+            let l3_entry = l3_table.0[l3_idx];
+            if l3_entry & DESC_VALID == 0 {
+                return Err(MmuError::MmuNotReady);
+            }
+            l3_table.0[l3_idx] = (l3_entry & !ATTR_MASK) | new_attr_bits;
+            offset += L3_PAGE_SIZE;
+        }
+    }
+
+    Ok(())
+}
+
+/// Returns the next-level table pointed to by `parent.0[idx]` if it is
+/// already a valid table descriptor, or `None` if that entry is invalid.
+fn existing_table_at<'a>(parent: &Table, idx: usize) -> Option<&'a mut Table> {
+    let entry = parent.0[idx];
+    if entry & DESC_VALID == 0 {
+        return None;
+    }
+    let table_ptr = (entry & 0x0000_FFFF_FFFF_F000) as *mut Table;
+    Some(unsafe { &mut *table_ptr })
+}
+
+
+
+/// Invalidates TLB entries for every 4KB page in `[start, start + len)`.
+fn invalidate_range(start: u64, len: u64) {
+    unsafe {
+        let mut va = start;
+        let end = start + len;
+        while va < end {
+            asm!("tlbi vaae1is, {}", in(reg) va >> 12, options(nostack));
+            va += L3_PAGE_SIZE;
+        }
+        asm!("dsb ish", "isb", options(nostack));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Service-facing API (same names and signatures as the other architectures)
+// ---------------------------------------------------------------------------
+
+fn raw(range: PhysRange) -> (u64, u64) {
+    (range.start().as_usize() as u64, range.len() as u64)
+}
+
+/// Maps `range` as device memory.
+pub fn map_device(range: PhysRange) -> Result<(), MmuError> {
+    let (phys, len) = raw(range);
+    map_device_raw(phys, len)
+}
+
+/// Maps `range` as ordinary cacheable memory.
+pub fn map_normal(range: PhysRange) -> Result<(), MmuError> {
+    let (phys, len) = raw(range);
+    map_normal_raw(phys, len)
+}
+
+/// Maps `range` as non-cacheable memory.
+pub fn map_normal_nc(range: PhysRange) -> Result<(), MmuError> {
+    let (phys, len) = raw(range);
+    map_normal_nc_raw(phys, len)
+}
+
+/// Changes an already mapped range to ordinary cacheable memory.
+pub fn remap_normal(range: PhysRange) -> Result<(), MmuError> {
+    let (phys, len) = raw(range);
+    remap_normal_raw(phys, len)
+}
+
+/// Changes an already mapped range to non-cacheable memory.
+pub fn remap_normal_nc(range: PhysRange) -> Result<(), MmuError> {
+    let (phys, len) = raw(range);
+    remap_normal_nc_raw(phys, len)
+}
+
+/// Converts a kernel virtual address to its physical address.
+pub fn va_to_pa(address: usize) -> usize {
+    to_phys(address as u64) as usize
+}
+
+/// Physical range of the kernel image, including its boot stack and tables.
+pub fn kernel_image_range() -> PhysRange {
+    unsafe extern "C" {
+        static _kernel_vma_start: u8;
+        static _kernel_vma_end: u8;
+    }
+
+    // This unsafe is actually needed, removing it will raise errors.
+    #[allow(unused_unsafe)]
+    let (start, end) = unsafe { ((&raw const _kernel_vma_start) as usize, (&raw const _kernel_vma_end) as usize) };
+    PhysRange::from_bounds(PhysAddr::new(va_to_pa(start)), PhysAddr::new(va_to_pa(end)))
+}
+
+/// Whether the `map_*` functions can be used yet.
+pub fn is_ready() -> bool {
+    MMU_STATE_READY.load(Ordering::Acquire) == 1
+}

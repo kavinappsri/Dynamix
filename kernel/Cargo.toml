@@ -1,0 +1,18 @@
+[package]
+name = "kernel"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+test = false
+bench = false
+name = "dynamix_kernel"
+path = "src/main.rs"
+
+
+[dependencies]
+[target.'cfg(any(target_arch = "aarch64", target_arch = "arm"))'.dependencies]
+hal = { path = "../hal", default-features = false, features = ["board-qemu-virt"] }
+
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+hal = { path = "../hal", default-features = false, features = ["board-qemu-x64"] }

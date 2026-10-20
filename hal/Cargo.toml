@@ -1,0 +1,27 @@
+[package]
+name = "hal"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+test = false
+bench = false
+
+[features]
+default = []
+
+board-qemu-virt = ["driver-pl011", "driver-fw-cfg", "driver-ramfb"]
+board-rk3126 = ["driver-dw-8250", "driver-rk3126-cru", "driver-rk3126-vop"]
+board-qemu-x64 = ["driver-ns16550"]
+
+driver-pl011 = []
+driver-fw-cfg = []
+driver-ramfb = ["driver-fw-cfg"]
+driver-dw-8250 = []
+driver-ns16550 = []
+driver-rk3126-cru = []
+driver-rk3126-vop = ["driver-rk3126-cru"]
+
+
+[dependencies]
+acpi = { version = "=5.2.0", default-features = false}

@@ -1,34 +1,34 @@
-# Rust
-target/
-
 #JetBrains
 .idea/
 
 #macOS
 .DS_Store
+*.__MACOSX/
 
 # Python
 __pycache__/
 *.pyc
+/.venv/
 
 # Logs
-*.log
+dynamix_asm.log
+dynamix_asm_v7.log
+/dynamix64.log
 
-# Device backups
-Backups/
 
 # Device-specific research
-Specific Docs/
-rkdeveloptool/
-
-
-
-
-# Temporary files
-tmp/
-temp/
+Device_Docs/
 
 # Added by cargo
-
 /target
 /.cargo/
+
+# Misc
+Archive.zip
+digest.txt
+ovmf/
+/esp/
+*.bin
+
+
+/Cargo.lock
