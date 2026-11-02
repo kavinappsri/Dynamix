@@ -12,4 +12,5 @@ pub mod pmm;
 pub mod power;
 pub mod sync;
 pub mod timer;
+pub mod heap;
 

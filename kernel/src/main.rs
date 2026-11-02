@@ -2,12 +2,16 @@
 #![no_main]
 
 //! Dynamix's kernel image.
+
+extern crate alloc;
+
 /// Polled console input and output over a HAL serial device.
 pub mod console;
 /// Embedded boot-logo rendering.
 pub mod logo;
 /// The UART command shell.
 pub mod shell;
+pub mod heap_test;
 
 use core::fmt::Write;
 use core::panic::PanicInfo;
@@ -19,12 +23,16 @@ use hal::services::addr::{PhysAddr, PhysRange};
 use hal::services::boot_info::BootInfo;
 use hal::services::cpu;
 use hal::services::framebuffer::FirmwareFramebuffer;
+use hal::services::heap::KernelHeap;
 
 /// Colors are `0x00RRGGBB`; the framebuffer's pixel format is applied by the HAL.
 const COLOR_BACKGROUND: u32 = 0x00_10_14_28;
 const COLOR_RED: u32 = 0x00_FF_00_00;
 const COLOR_GREEN: u32 = 0x00_00_FF_00;
 const COLOR_BLUE: u32 = 0x00_00_00_FF;
+
+#[global_allocator]
+static HEAP: KernelHeap = KernelHeap::new();
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -82,9 +90,8 @@ fn draw_boot_marker(framebuffer: &FirmwareFramebuffer, status: &BootStatus) {
     }
 }
 
-/// Dev aid: power off this many milliseconds after boot completes, which
-/// exercises the timer and power services end to end. `None` halts instead.
 const DEV_AUTO_SHUTDOWN_MS: Option<u64> = None;
+const DEV_HEAP_SELFTEST: bool = true;
 
 #[unsafe(no_mangle)]
 pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
@@ -124,6 +131,13 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
 
     hal::services::pmm::init(boot_info.memory_regions.as_slice(), &reserved[..reserved_count]).expect("Physical memory manager init failed");
 
+    if DEV_HEAP_SELFTEST {
+        heap_test::run(&HEAP);
+        if let Some(uart) = serial {
+            let _ = writeln!(SerialWriter(uart), "[+] Kernel heap self-test passed: {:?}", HEAP.stats());
+        }
+    }
+
     // SoC support drivers the display may depend on; a miss is fine.
     if let Some(hardware) = hardware {
         let _ = hal::driver_traits::power_domain::probe_power_domains(hardware);
@@ -152,6 +166,19 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
         .and_then(|hardware| hal::driver_traits::framebuffer::probe_framebuffer(hardware).ok())
         .or_else(|| hal::services::exceptions::fault_framebuffer().map(|fb| fb as &'static dyn Framebuffer));
 
+    if let (Some(uart), Some(display)) = (serial, display) {
+        let mut console = console::Console::new(uart);
+        display.fill(0x00_00_00_00);
+        if logo::draw_centered(display).is_err() {
+            let _ = writeln!(console, "[ ] Failed to draw boot logo");
+        }
+    } else if let Some(display) = display {
+        display.fill(0x00_00_00_00);
+        let _ = logo::draw_centered(display);
+    } else if let Some(fb) = framebuffer {
+        fb.fill(COLOR_RED);
+    }
+
     if let Some(ms) = DEV_AUTO_SHUTDOWN_MS {
         hal::services::timer::delay_ms(ms);
         hal::services::power::system_off();
@@ -160,6 +187,9 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
     if let (Some(uart), Some(display)) = (serial, display) {
         let mut console = console::Console::new(uart);
         console.writeln("Dynamix active");
+
+
+
         shell::run(&mut console, display)
     }
 

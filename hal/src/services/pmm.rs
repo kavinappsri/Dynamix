@@ -5,8 +5,9 @@ pub use crate::services::addr::{FRAME_SIZE, PhysFrame};
 use crate::services::mmu::{self, MmuError};
 use crate::services::sync::SpinLock;
 
-/// Highest supported buddy order.
-pub const MAX_ORDER: usize = 10;
+/// Highest supported buddy order:
+/// biggest block is `FRAME_SIZE << MAX_ORDER`,  currently 16MB
+pub const MAX_ORDER: usize = 12;
 
 /// Maximum number of caller-supplied reserved ranges [`init`] accepts
 pub const MAX_RESERVED_RANGES: usize = 15;

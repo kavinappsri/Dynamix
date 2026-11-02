@@ -1,76 +1,103 @@
 //! The UART shell: a command loop over the serial console that can change the
 //! display and shut the machine down.
 
-use core::fmt::Write;
+use core::fmt::{write, Write};
+use alloc::string::String;
+use alloc::vec::Vec;
 
 use crate::console::Console;
 use crate::logo;
 use hal::driver_traits::framebuffer::Framebuffer;
 
+pub enum Command {
+    Fill,
+    Shutdown,
+    Stats,
+    Unknown,
+}
+
 /// Runs the command loop forever.
 pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
-    let mut command_buffer = [0u8; 128];
+    let mut input_buffer = String::new();
 
     loop {
         console.write("dynamix <~ ");
-        let length = console.read_ln(&mut command_buffer);
+        console.read_line(&mut input_buffer);
         console.writeln("");
 
-        match &command_buffer[..length] {
-            b"shut" => {
-                console.writeln("Shutting down");
-                hal::services::power::system_off();
-            }
-            b"logo" => {
-                display.fill(0x00_00_00_00);
+        let lower = input_buffer.to_lowercase();
+        let args: Vec<&str> = lower.split_whitespace().collect();
 
-                match logo::draw_centered(display) {
-                    Ok(()) => console.writeln("Displaying Dynamix Boot Logo"),
-                    Err(e) => {
-                        let _ = writeln!(console, "Cannot draw the boot logo: {e:?}");
+        let cmd = match args.first() {
+            Some(&"fill") => Command::Fill,
+            Some(&"shutdown") => Command::Shutdown,
+            Some(&"stats") => Command::Stats,
+            _ => Command::Unknown,
+        };
+
+        match cmd {
+            Command::Fill => {
+                let Some(color) = args.get(1) else {
+                    let _ = writeln!(console, "Usage: fill <color>");
+                    continue;
+                };
+
+                match *color {
+                    "red" => {
+                        display.fill(0x00_ff_00_00);
+                    }
+                    "green" => {
+                        display.fill(0x00_00_ff_00);
+                    }
+                    "blue" => {
+                        display.fill(0x00_00_00_ff);
+                    }
+                    "white" => {
+                        display.fill(0x00_ff_ff_ff);
+                    }
+                    "black" => {
+                        display.fill(0x00_00_00_00);
+                    }
+                    "logo" => {
+                        display.fill(0x00_00_00_00);
+                        let _ = logo::draw_centered(display);
+                    }
+                    _ => {
+                        let _ = writeln!(console, "Unknown color");
                     }
                 }
             }
-            b"red" => {
-                display.fill(0x00_FF_00_00);
-                console.writeln("Screen set to Red");
-            }
-            b"green" => {
-                display.fill(0x00_00_FF_00);
-                console.writeln("Screen set to Green");
-            }
-            b"blue" => {
-                display.fill(0x00_00_00_FF);
-                console.writeln("Screen set to Blue");
-            }
-            b"white" => {
-                display.fill(0x00_FF_FF_FF);
-                console.writeln("Screen set to White");
-            }
-            b"clear" | b"black" => {
-                display.fill(0x00_00_00_00);
-                console.writeln("Screen cleared");
-            }
-            b"yellow" => {
-                display.fill(0x00_FF_FF_00);
-                console.writeln("Screen set to Yellow");
-            }
-            b"d-shut" => {
-                hal::services::timer::delay_ms(5000);
-
+            Command::Shutdown => {
+                let _ = writeln!(console, "Shutting down... :)");
                 hal::services::power::system_off();
             }
-            b"pmm-stats" => match hal::services::pmm::stats() {
-                Ok((free, total)) => {
-                    let _ = writeln!(console, "Pmm stats:\nfree frames: {free}\ntotal frames: {total}");
+            Command::Stats => {
+                let Some(service) = args.get(1) else {
+                    let _ = writeln!(console, "Usage: stats <service>");
+                    continue;
+                };
+
+                match *service {
+                    "pmm" => {
+                        match hal::services::pmm::stats() {
+                            Ok((free, total)) => {
+                                let _ = writeln!(console, "Pmm stats:\nfree frames: {free}\ntotal frames: {total}");
+                            }
+                            Err(e) => {
+                                let _ = writeln!(console, "ERROR!\n{e:?}");
+                            }
+                        }
+                    }
+                    _ => {
+                        let _ = writeln!(console, "Unknown service");
+                    }
                 }
-                Err(e) => {
-                    let _ = writeln!(console, "ERROR!\n{e:?}");
-                }
-            },
-            _ => console.writeln("Unrecognized Command"),
+            }
+            Command::Unknown => {
+                let _ = writeln!(console, "Unknown command");
+            }
         }
 
-        command_buffer.fill(0);
+        input_buffer.clear();
     }
 }

@@ -1,5 +1,8 @@
 //! A small line-oriented console over a polling serial device.
 
+use core::char;
+use alloc::string::String;
+
 use hal::Serial;
 
 /// A borrowed serial console with basic text, hexadecimal, and line input I/O.
@@ -87,6 +90,32 @@ impl<'a> Console<'a> {
         }
 
         index
+    }
+
+    pub fn read_line(&mut self, buffer: &mut String) {
+        loop {
+            let byte = self.uart.read_byte();
+
+            match byte {
+                b'\n' | b'\r' => {
+                    self.uart.write_byte(b'\n');
+                    break;
+                }
+                b'\x08' | b'\x7F' => {
+                    if !buffer.is_empty() {
+                        buffer.pop();
+
+                        self.uart.write_byte(b'\x08');
+                        self.uart.write_byte(b' ');
+                        self.uart.write_byte(b'\x08');
+                    }
+                }
+                _ => {
+                    buffer.push(char::from(byte));
+                    self.uart.write_byte(byte);
+                }
+            }
+        }
     }
 }
 
