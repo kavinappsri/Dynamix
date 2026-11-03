@@ -43,55 +43,6 @@ impl<'a> Console<'a> {
         }
     }
 
-    /// Reads one terminal line into `buffer` and returns the number of bytes stored.
-    ///
-    /// Input is echoed. Carriage return and newline terminate the line;
-    /// backspace and delete remove the most recently stored byte. Additional
-    /// input is discarded once `buffer` is full, until a line ending arrives.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let mut line = [0; 64];
-    /// let length = console.read_ln(&mut line);
-    /// let command = &line[..length];
-    /// ```
-    pub fn read_ln(&mut self, buffer: &mut [u8]) -> usize {
-        let mut index = 0;
-
-        loop {
-            let byte = self.uart.read_byte();
-
-            match byte {
-                //Return
-                b'\n' | b'\r' => {
-                    self.uart.write_byte(b'\n');
-                    break;
-                }
-                // Backspace (0x08 = BS / Ctrl+H, 0x7F = DEL / Backspace key)
-                b'\x08' | b'\x7F' => {
-                    if index > 0 {
-                        index -= 1;
-
-                        self.uart.write_byte(b'\x08');
-                        self.uart.write_byte(b' ');
-                        self.uart.write_byte(b'\x08');
-                    }
-                }
-                _ => {
-                    if index < buffer.len() {
-                        buffer[index] = byte;
-                        index += 1;
-
-                        self.uart.write_byte(byte);
-                    }
-                }
-            }
-        }
-
-        index
-    }
-
     pub fn read_line(&mut self, buffer: &mut String) {
         loop {
             let byte = self.uart.read_byte();

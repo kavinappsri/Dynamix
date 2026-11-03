@@ -1,12 +1,14 @@
-//! The UART shell: a command loop over the serial console that can change the
-//! display and shut the machine down.
+//! UART shell
 
-use core::fmt::{write, Write};
+
+use core::fmt::Write;
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::console::Console;
 use crate::logo;
+use crate::global::HEAP;
+
 use hal::driver_traits::framebuffer::Framebuffer;
 
 pub enum Command {
@@ -19,14 +21,16 @@ pub enum Command {
 /// Runs the command loop forever.
 pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
     let mut input_buffer = String::new();
+    let mut lower = String::new();
+    let mut args = Vec::<&str>::new();
 
     loop {
         console.write("dynamix <~ ");
         console.read_line(&mut input_buffer);
         console.writeln("");
 
-        let lower = input_buffer.to_lowercase();
-        let args: Vec<&str> = lower.split_whitespace().collect();
+        lower = input_buffer.to_lowercase();
+        args = lower.split_whitespace().collect();
 
         let cmd = match args.first() {
             Some(&"fill") => Command::Fill,
@@ -88,6 +92,10 @@ pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
                             }
                         }
                     }
+                    "heap" => {
+                        let stats = HEAP.stats();
+                        let _ = writeln!(console, "{:#?}", stats);
+                    }
                     _ => {
                         let _ = writeln!(console, "Unknown service");
                     }
@@ -97,7 +105,9 @@ pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
                 let _ = writeln!(console, "Unknown command");
             }
         }
-
+        
+        args.clear();
+        lower.clear();
         input_buffer.clear();
     }
 }

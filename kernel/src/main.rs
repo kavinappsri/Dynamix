@@ -12,10 +12,13 @@ pub mod logo;
 /// The UART command shell.
 pub mod shell;
 pub mod heap_test;
+mod global;
 
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicBool, Ordering};
+
+use crate::global::*;
 
 use hal::Framebuffer;
 use hal::driver_traits::serial::SerialWriter;
@@ -30,9 +33,6 @@ const COLOR_BACKGROUND: u32 = 0x00_10_14_28;
 const COLOR_RED: u32 = 0x00_FF_00_00;
 const COLOR_GREEN: u32 = 0x00_00_FF_00;
 const COLOR_BLUE: u32 = 0x00_00_00_FF;
-
-#[global_allocator]
-static HEAP: KernelHeap = KernelHeap::new();
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
