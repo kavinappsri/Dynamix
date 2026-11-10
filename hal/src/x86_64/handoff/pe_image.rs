@@ -14,6 +14,12 @@ const RELOC_DIRECTORY_INDEX: u64 = 5;
 const RELOC_ABSOLUTE: u16 = 0;
 const RELOC_DIR64: u16 = 10;
 
+/// Where the image is mapped right now (its higher-half address once paging
+/// has switched over). For diagnostics.
+pub(super) fn runtime_base() -> usize {
+    (&raw const __ImageBase) as usize
+}
+
 /// Where the firmware put the binary
 #[derive(Clone, Copy)]
 pub(super) struct ImageInfo {

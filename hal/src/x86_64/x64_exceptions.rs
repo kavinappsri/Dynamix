@@ -2,10 +2,9 @@
 
 use core::arch::{asm, global_asm};
 use core::cell::UnsafeCell;
-use core::fmt::Write;
+use core::fmt;
 
-use crate::services::framebuffer::FirmwareFramebuffer;
-use crate::driver_traits::serial::{SerialWriter, active_serial};
+use crate::services::fault::{self, FaultClass, FaultReport, Hex};
 use crate::x86_64::gdt;
 
 global_asm!(include_str!("../asm/x86_64/x64_vectors.s"));
@@ -167,44 +166,59 @@ fn read_cr2() -> u64 {
     value
 }
 
-fn report(ctx: &ExceptionContext) {
-    // Serial may not be probed yet (or at all); the framebuffer paint still happens.
-    let Some(uart) = active_serial() else { return };
-    let mut out = SerialWriter(uart);
-    let name = NAMES.get(ctx.vector as usize).copied().unwrap_or("unknown");
-    let _ = writeln!(out, "\n=== CPU EXCEPTION: {} (vector {}) ===", name, ctx.vector);
-    let _ = writeln!(out, "error code {:#x}", ctx.error_code);
-    if ctx.vector == 14 {
-        let e = ctx.error_code;
-        let _ = writeln!(
-            out,
-            "cr2 {:#018x}  [{} {} {}{}]",
-            read_cr2(),
-            if e & 1 != 0 { "protection" } else { "not-present" },
-            if e & 2 != 0 { "write" } else { "read" },
-            if e & 4 != 0 { "user" } else { "supervisor" },
-            if e & 16 != 0 { " ifetch" } else { "" },
-        );
+/// Decoded cause of a fault, from the vector and its error code.
+struct Cause<'a>(&'a ExceptionContext);
+
+impl fmt::Display for Cause<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let e = self.0.error_code;
+        match self.0.vector {
+            14 => write!(
+                f,
+                "{} on {} ({}{}{}), error code {:#x}",
+                if e & 1 != 0 { "protection violation" } else { "page not present" },
+                if e & 2 != 0 { "write" } else { "read" },
+                if e & 4 != 0 { "user" } else { "supervisor" },
+                if e & 8 != 0 { ", reserved bit set" } else { "" },
+                if e & 16 != 0 { ", instruction fetch" } else { "" },
+                e,
+            ),
+            // Faults that report a selector: bit 0 external, bits 1-2 which
+            // table, the rest the index. Zero means "not segment related".
+            10..=13 if e != 0 => write!(
+                f,
+                "error code {:#x}: {} index {}{}",
+                e,
+                match (e >> 1) & 3 {
+                    0 => "GDT",
+                    2 => "LDT",
+                    _ => "IDT",
+                },
+                e >> 3,
+                if e & 1 != 0 { " (external event)" } else { "" },
+            ),
+            8 => write!(f, "a fault occurred while delivering another one (often a stack overflow), error code {:#x}", e),
+            // Only these vectors push an error code; for the rest the field is just 0.
+            8 | 10..=14 | 17 | 21 | 29 | 30 => write!(f, "error code {:#x}", e),
+            _ => write!(f, "no error code"),
+        }
     }
-    let _ = writeln!(out, "rip {:#018x}  cs {:#06x}  rflags {:#018x}", ctx.rip, ctx.cs, ctx.rflags);
-    let _ = writeln!(out, "rsp {:#018x}  ss {:#06x}", ctx.rsp, ctx.ss);
-    let _ = writeln!(out, "rax {:#018x}  rbx {:#018x}  rcx {:#018x}", ctx.rax, ctx.rbx, ctx.rcx);
-    let _ = writeln!(out, "rdx {:#018x}  rsi {:#018x}  rdi {:#018x}", ctx.rdx, ctx.rsi, ctx.rdi);
-    let _ = writeln!(out, "rbp {:#018x}  r8  {:#018x}  r9  {:#018x}", ctx.rbp, ctx.r8, ctx.r9);
-    let _ = writeln!(out, "r10 {:#018x}  r11 {:#018x}  r12 {:#018x}", ctx.r10, ctx.r11, ctx.r12);
-    let _ = writeln!(out, "r13 {:#018x}  r14 {:#018x}  r15 {:#018x}", ctx.r13, ctx.r14, ctx.r15);
 }
 
-fn paint(fb: &FirmwareFramebuffer, vector: u64) {
-    const MAGENTA: u32 = 0xFF00FF;
-    const WHITE: u32 = 0xFFFFFF;
-    const BLACK: u32 = 0x000000;
-    const CELL: usize = 24;
+/// The register dump, laid out like the other architectures' (three per row).
+struct Registers<'a>(&'a ExceptionContext);
 
-    fb.fill(MAGENTA);
-    for bit in 0..8usize {
-        let color = if vector >> (7 - bit) & 1 != 0 { WHITE } else { BLACK };
-        fb.fill_rect(8 + bit * (CELL + 4), 8, CELL, CELL, color);
+impl fmt::Display for Registers<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let c = self.0;
+        let h = |v: u64| Hex(v as usize);
+        writeln!(f, "rax {}  rbx {}  rcx {}", h(c.rax), h(c.rbx), h(c.rcx))?;
+        writeln!(f, "rdx {}  rsi {}  rdi {}", h(c.rdx), h(c.rsi), h(c.rdi))?;
+        writeln!(f, "rbp {}  r8  {}  r9  {}", h(c.rbp), h(c.r8), h(c.r9))?;
+        writeln!(f, "r10 {}  r11 {}  r12 {}", h(c.r10), h(c.r11), h(c.r12))?;
+        writeln!(f, "r13 {}  r14 {}  r15 {}", h(c.r13), h(c.r14), h(c.r15))?;
+        writeln!(f, "rsp {}  rflags {}", h(c.rsp), h(c.rflags))?;
+        writeln!(f, "cs  {:#06x}  ss {:#06x}", c.cs, c.ss)
     }
 }
 
@@ -216,12 +230,25 @@ pub extern "efiapi" fn x86_exception_handler(ctx: &mut ExceptionContext) {
         crate::services::interrupts::handle_interrupt(Some(ctx.vector as u32));
         return;
     }
-    report(ctx);
+
+    let cause = Cause(ctx);
+    let registers = Registers(ctx);
+    let report = FaultReport {
+        class: FaultClass::Exception,
+        kind: NAMES.get(ctx.vector as usize).copied().unwrap_or("unknown"),
+        cause: &cause,
+        pc: Some(ctx.rip as usize),
+        fault_addr: (ctx.vector == 14).then(|| read_cr2() as usize),
+        registers: Some(&registers),
+        frame_pointer: ctx.rbp as usize,
+        link_register: None,
+        stack_hint: ctx.rsp as usize,
+        code: ctx.vector as u8,
+    };
+
     if ctx.vector == VECTOR_BREAKPOINT {
+        fault::print(&report);
         return;
     }
-    if let Some(fb) = crate::services::exceptions::fault_framebuffer() {
-        paint(fb, ctx.vector);
-    }
-    crate::services::cpu::hlt_frvr()
+    fault::fatal(&report)
 }

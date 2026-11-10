@@ -5,6 +5,8 @@ target = "aarch64-unknown-none"
 rustflags = [
     "-C",
     "link-arg=-Tkernel/asm/aarch64/aarch64_linker.ld",
+    "-C",
+    "force-frame-pointers=yes",
 ]
 runner = [
     "scripts/run_aarch64.sh"
@@ -14,12 +16,23 @@ runner = [
 rustflags = [
     "-C",
     "link-args=-Tkernel/asm/armv7/armv7_linker.ld",
+    "-C",
+    "force-frame-pointers=yes",
 ]
 runner = [
     "scripts/run_armv7.sh"
 ]
 
 [target.x86_64-unknown-uefi]
+rustflags = [
+    "-C",
+    "force-frame-pointers=yes",
+    # The .efi carries no symbols (they are in the .pdb), so have the linker
+    # write a symbol map for scripts/symbolize.py. One file, always matching
+    # the most recent x86_64 build.
+    "-C",
+    "link-arg=/MAP:target/dynamix_x64.map",
+]
 runner = [
     "sh",
     "-c",

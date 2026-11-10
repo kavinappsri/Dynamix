@@ -16,7 +16,6 @@ pub mod selftest;
 
 use core::fmt::Write;
 use core::panic::PanicInfo;
-use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::global::*;
 
@@ -34,23 +33,11 @@ const COLOR_RED: u32 = 0x00_FF_00_00;
 const COLOR_GREEN: u32 = 0x00_00_FF_00;
 const COLOR_BLUE: u32 = 0x00_00_00_FF;
 
+/// Every panic ends up in the HAL's fault reporter, which prints the same
+/// report as a CPU exception would (message, location, backtrace) and halts.
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    // A panic while reporting a panic must not recurse.
-    static PANICKING: AtomicBool = AtomicBool::new(false);
-
-    if !PANICKING.swap(true, Ordering::AcqRel) {
-        if let Some(uart) = hal::active_serial() {
-            let _ = writeln!(SerialWriter(uart), "\n== DYNAMIX stage fright ==\n{info}");
-        }
-
-        // The HAL keeps the framebuffer registered for fatal faults; a panic is one.
-        if let Some(framebuffer) = hal::services::exceptions::fault_framebuffer() {
-            framebuffer.fill(COLOR_RED);
-        }
-    }
-
-    cpu::hlt_frvr()
+    hal::services::fault::panic(info)
 }
 
 /// Which bring-up steps worked; drawn as the status squares of the boot marker.

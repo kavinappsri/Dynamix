@@ -10,31 +10,37 @@ use crate::logo;
 use crate::global::HEAP;
 
 use hal::driver_traits::framebuffer::Framebuffer;
+use hal::services::fault::{self, CrashKind};
 
 pub enum Command {
     Fill,
     Shutdown,
     Stats,
+    Crash,
     Unknown,
 }
 
 /// Runs the command loop forever.
 pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
     let mut input_buffer = String::new();
-    let mut args: Vec<&str>;
 
     loop {
+        // Cleared at the top, not the bottom: the usage branches below
+        // `continue`, and a stale half-typed line must not leak into the next one.
+        input_buffer.clear();
+
         console.write("dynamix <~ ");
         console.read_line(&mut input_buffer);
         console.writeln("");
 
         input_buffer = input_buffer.to_lowercase();
-        args = input_buffer.split_whitespace().collect();
+        let args: Vec<&str> = input_buffer.split_whitespace().collect();
 
         let cmd = match args.first() {
             Some(&"fill") => Command::Fill,
             Some(&"shutdown") => Command::Shutdown,
             Some(&"stats") => Command::Stats,
+            Some(&"crash") => Command::Crash,
             _ => Command::Unknown,
         };
 
@@ -100,12 +106,22 @@ pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
                     }
                 }
             }
+            Command::Crash => {
+                let kind = match args.get(1).copied() {
+                    Some("panic") => CrashKind::Panic,
+                    Some("read") => CrashKind::UnmappedRead,
+                    Some("undef") => CrashKind::UndefinedInstruction,
+                    _ => {
+                        let _ = writeln!(console, "Usage: crash <panic|read|undef>");
+                        continue;
+                    }
+                };
+                let _ = writeln!(console, "Crashing on purpose ({kind:?})...");
+                fault::crash(kind);
+            }
             Command::Unknown => {
                 let _ = writeln!(console, "Unknown command");
             }
         }
-
-        args.clear();
-        input_buffer.clear();
     }
 }

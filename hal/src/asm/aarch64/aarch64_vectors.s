@@ -4,7 +4,8 @@
 /*
  * Frame layout, shared with `ExceptionContext` in aarch64_exceptions.rs
  * (the Rust side asserts the size):
- *   x0..x29 @ 0..240, x30 @ 240, elr @ 248, spsr @ 256, esr @ 264, far @ 272
+ *   x0..x29 @ 0..240, x30 @ 240, elr @ 248, spsr @ 256, esr @ 264, far @ 272,
+ *   sp (the interrupted stack pointer) @ 280
  */
 .equ FRAME_SIZE, 288
 /* q0..q31 (512 bytes), then fpsr and fpcr (16 bytes) */
@@ -37,6 +38,10 @@
     mrs x0, esr_el1
     mrs x1, far_el1
     stp x0, x1, [sp, #264]
+
+    /* the stack pointer the interrupted code had, for backtraces */
+    add x0, sp, #FRAME_SIZE
+    str x0, [sp, #280]
 .endm
 
 .macro RESTORE_CONTEXT

@@ -6,6 +6,14 @@ use crate::services::acpi::AcpiQuery;
 use crate::services::boot_info::{BootInfo, HardwareDescription};
 use crate::services::cpu;
 
+/// The address range the kernel image occupies right now, for diagnostics.
+/// `None` until the image has been measured.
+pub fn image_bounds() -> Option<(usize, usize)> {
+    let size = paging::image_size()?;
+    let base = pe_image::runtime_base();
+    Some((base, base + size))
+}
+
 /// Moves onto the kernel's boot stack and continues into `rust_main`.
 ///
 /// # Safety

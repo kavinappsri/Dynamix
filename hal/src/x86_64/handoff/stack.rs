@@ -6,7 +6,7 @@ use core::cell::UnsafeCell;
 use crate::services::boot_info::BootInfo;
 
 /// Size of the boot stack.
-pub const BOOT_STACK_SIZE: usize = 64 * 1024;
+pub const BOOT_STACK_SIZE: usize = 128 * 1024;
 
 #[repr(C, align(4096))]
 struct BootStack(UnsafeCell<[u8; BOOT_STACK_SIZE]>);

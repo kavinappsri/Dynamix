@@ -11,6 +11,6 @@ qemu-system-arm \
   -device ramfb \
   -serial stdio \
   -monitor none \
-  -d in_asm,int \
+  -d "${QEMU_DEBUG:-int,guest_errors}" \
   -D dynamix_asm_v7.log \
   -kernel "$BINARY_BIN"

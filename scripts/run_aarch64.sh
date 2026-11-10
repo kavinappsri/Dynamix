@@ -11,6 +11,6 @@ qemu-system-aarch64 \
   -device ramfb \
   -serial stdio \
   -monitor none \
-  -d in_asm,int \
+  -d "${QEMU_DEBUG:-int,guest_errors}" \
   -D dynamix_asm.log \
   -kernel "$BINARY_BIN"

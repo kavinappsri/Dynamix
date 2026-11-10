@@ -1,7 +1,9 @@
 //! AArch64 EL1 exception-vector initialization and diagnostic reporting.
 
 use core::arch::global_asm;
-use crate::{Serial, active_serial};
+use core::fmt;
+
+use crate::services::fault::{self, FaultClass, FaultReport, Hex};
 
 global_asm!(include_str!("../asm/aarch64/aarch64_vectors.s"));
 
@@ -27,7 +29,8 @@ pub struct ExceptionContext {
     pub esr: u64, // Exception Syndrome Register
     /// Fault Address Register, where applicable.
     pub far: u64, // Fault Address Register (Memory address involved in fault)
-    _pad: u64, // Padding to keep struct 16-byte aligned
+    /// Stack pointer of the interrupted code (also keeps the struct 16-byte aligned).
+    pub sp: u64,
 }
 
 const _: () = assert!(core::mem::size_of::<ExceptionContext>() == 288, "must match FRAME_SIZE in aarch64_vectors.s");
@@ -62,80 +65,138 @@ const SOURCES: [&str; 4] = [
 
 const KINDS: [&str; 4] = ["Synchronous", "IRQ", "FIQ", "SError"];
 
+/// Decoded cause: what the syndrome register says, plus which vector slot fired.
+struct Cause<'a> {
+    ctx: &'a ExceptionContext,
+    source: usize,
+    kind: usize,
+}
+
+impl fmt::Display for Cause<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let esr = self.ctx.esr;
+        let ec = (esr >> 26) & 0x3F;
+        let iss = esr & 0x01FF_FFFF;
+
+        // The syndrome is only meaningful for synchronous exceptions and SError.
+        if self.kind == 0 {
+            match ec {
+                0x20 | 0x21 => write!(f, "{}", Fsc(iss & 0x3F))?,
+                0x24 | 0x25 => write!(f, "{} on {}", Fsc(iss & 0x3F), if iss & (1 << 6) != 0 { "write" } else { "read" })?,
+                0x11 | 0x15 => write!(f, "svc #{}", iss & 0xFFFF)?,
+                0x3C => write!(f, "brk #{}", iss & 0xFFFF)?,
+                _ => write!(f, "ESR EC {:#04x}, ISS {:#09x}", ec, iss)?,
+            }
+        } else {
+            write!(f, "ESR {:#x}", esr)?;
+        }
+
+        write!(
+            f,
+            "  [{} / {}]",
+            SOURCES.get(self.source).unwrap_or(&"Unknown"),
+            KINDS.get(self.kind).unwrap_or(&"Unknown"),
+        )
+    }
+}
+
+/// A fault status code (DFSC / IFSC) from the ISS of an abort.
+struct Fsc(u64);
+
+impl fmt::Display for Fsc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let level = self.0 & 3;
+        match self.0 {
+            0x00..=0x03 => write!(f, "address size fault, level {level}"),
+            0x04..=0x07 => write!(f, "translation fault, level {level}"),
+            0x08..=0x0B => write!(f, "access flag fault, level {level}"),
+            0x0C..=0x0F => write!(f, "permission fault, level {level}"),
+            0x10 => write!(f, "synchronous external abort"),
+            0x14..=0x17 => write!(f, "external abort on translation table walk, level {level}"),
+            0x21 => write!(f, "alignment fault"),
+            0x30 => write!(f, "TLB conflict abort"),
+            other => write!(f, "unknown fault status {other:#04x}"),
+        }
+    }
+}
+
+/// The register dump, laid out like the other architectures' (three per row).
+struct Registers<'a>(&'a ExceptionContext);
+
+impl fmt::Display for Registers<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let c = self.0;
+        for (row, chunk) in c.gpr.chunks(3).enumerate() {
+            for (i, value) in chunk.iter().enumerate() {
+                write!(f, "x{:<2} {}  ", row * 3 + i, Hex(*value as usize))?;
+            }
+            writeln!(f)?;
+        }
+        writeln!(f, "lr  {}  sp  {}", Hex(c.lr as usize), Hex(c.sp as usize))?;
+        writeln!(f, "esr {}  far {}  spsr {}", Hex(c.esr as usize), Hex(c.far as usize), Hex(c.spsr as usize))
+    }
+}
+
 #[unsafe(no_mangle)]
 /// Handles an exception forwarded by the assembly vector table.
 ///
-/// The function reports the captured state through the serial device selected
-/// by HAL, then halts permanently. `source` and `kind` are vector-table
-/// indices passed by `vectors.s`; unknown values are rendered as `Unknown`.
-///
-/// # Panics
-///
-/// This handler itself does not panic, but it never returns.
-pub extern "C" fn rust_exception_handler(ctx: &ExceptionContext, source: usize, kind: usize) {
-    let Some(uart) = active_serial() else { loop {core::hint::spin_loop()} };
+/// The exception is reported through [`crate::services::fault`], which halts
+/// permanently. `source` and `kind` are vector-table indices passed by
+/// `vectors.s`; unknown values are rendered as `Unknown`.
+pub extern "C" fn rust_exception_handler(ctx: &ExceptionContext, source: usize, kind: usize) -> ! {
+    let ec = (ctx.esr >> 26) & 0x3F;
 
-    uart.write_str("\n=== DYNAMIX STAGE FRIGHT ===\n");
-    uart.write_str("Triggered by the exception vector table\n");
-    uart.write_str("Source: ");
-    uart.write_str(SOURCES.get(source).unwrap_or(&"Unknown"));
-    uart.write_str("\nType:   ");
-    uart.write_str(KINDS.get(kind).unwrap_or(&"Unknown"));
-    uart.write_str("\n\n");
+    let name = match kind {
+        0 => exception_class_name(ec),
+        1 => "Unexpected IRQ",
+        2 => "Unexpected FIQ",
+        3 => "SError interrupt",
+        _ => "Unknown exception",
+    };
+    // FAR is only defined for aborts, PC alignment faults and watchpoints.
+    let far_valid = kind == 0 && matches!(ec, 0x20 | 0x21 | 0x22 | 0x24 | 0x25 | 0x34 | 0x35);
 
-    let ec = ctx.esr >> 26;
-
-    uart.write_str("Exception Class: ");
-    uart.write_str(exception_class_name(ec));
-    uart.write_str("\n\n");
-
-    // Hex dump registers
-    print_hex(uart, "ELR_EL1 (PC)", ctx.elr);
-    print_hex(uart, "FAR_EL1 (Addr)", ctx.far);
-    print_hex(uart, "ESR_EL1 (Syndrome)", ctx.esr);
-    print_hex(uart, "SPSR_EL1", ctx.spsr);
-
-    uart.write_str("\nSystem halted.\n");
-
-    loop {core::hint::spin_loop()}
-}
-
-fn print_hex(uart: &dyn Serial, label: &str, val: u64) {
-    uart.write_str(label);
-    uart.write_str(": 0x");
-
-    let hex_chars = b"0123456789ABCDEF";
-    for i in (0..16).rev() {
-        let byte = ((val >> (i * 4)) & 0xF) as usize;
-        uart.write_byte(hex_chars[byte]);
-    }
-    uart.write_str("\n");
+    let cause = Cause { ctx, source, kind };
+    let registers = Registers(ctx);
+    let report = FaultReport {
+        class: FaultClass::Exception,
+        kind: name,
+        cause: &cause,
+        pc: Some(ctx.elr as usize),
+        fault_addr: far_valid.then_some(ctx.far as usize),
+        registers: Some(&registers),
+        frame_pointer: ctx.gpr[29] as usize,
+        link_register: Some(ctx.lr as usize),
+        stack_hint: ctx.sp as usize,
+        code: ec as u8,
+    };
+    fault::fatal(&report)
 }
 
 fn exception_class_name(ec: u64) -> &'static str {
     match ec {
-        0x00 => "Unknown",
-
+        0x00 => "Undefined instruction (EC 0x00, unknown reason)",
         0x01 => "Trapped WFI/WFE",
-
-        0x07 => "Floating Point / SIMD",
-
+        0x03 => "Trapped AArch32 CP15 access",
+        0x07 => "Trapped FP/SIMD access",
+        0x0E => "Illegal execution state",
+        0x11 => "SVC (AArch32)",
         0x15 => "SVC (Supervisor Call)",
-
-        0x18 => "System Register Trap",
-
+        0x16 => "HVC",
+        0x17 => "SMC",
+        0x18 => "System register trap",
         0x20 => "Instruction Abort (Lower EL)",
-
         0x21 => "Instruction Abort (Current EL)",
-
+        0x22 => "PC alignment fault",
         0x24 => "Data Abort (Lower EL)",
-
         0x25 => "Data Abort (Current EL)",
-
-        0x2C => "Floating Point Exception",
-
+        0x26 => "SP alignment fault",
+        0x28 | 0x2C => "Floating-point exception",
         0x2F => "SError",
-
-        _ => "Reserved / Unknown",
+        0x30 | 0x31 => "Breakpoint",
+        0x32 | 0x33 => "Software step",
+        0x34 | 0x35 => "Watchpoint",
+        0x3C => "BRK instruction",
+        _ => "Reserved / unknown exception class",
     }
 }

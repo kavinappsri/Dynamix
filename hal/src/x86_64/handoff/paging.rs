@@ -25,6 +25,14 @@ pub struct Prepared {
 pub type HigherHalfEntry = unsafe extern "efiapi" fn() -> !;
 
 /// Physical range of the kernel image once `prepare` has run.
+/// Size in bytes of the kernel image, once it is known.
+pub fn image_size() -> Option<usize> {
+    match IMAGE_BASE.load(Ordering::Acquire) {
+        0 => None,
+        _ => Some(IMAGE_SIZE.load(Ordering::Relaxed) as usize),
+    }
+}
+
 pub fn image_range() -> Option<PhysRange> {
     match IMAGE_BASE.load(Ordering::Acquire) {
         0 => None,
