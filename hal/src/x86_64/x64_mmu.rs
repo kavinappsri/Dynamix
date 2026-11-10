@@ -10,7 +10,7 @@ use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use crate::services::addr::PhysRange;
 use crate::services::mmu::MmuError;
-use crate::services::sync::SpinLock;
+use crate::services::sync::IrqSpinLock;
 
 /// The kernel image lives in virtual memory.
 pub const KERNEL_VIRT_BASE: u64 = 0xFFFF_FFFF_8000_0000;
@@ -63,7 +63,7 @@ static ROOT: AtomicU64 = AtomicU64::new(0);
 static VIRT_OFFSET: AtomicU64 = AtomicU64::new(0);
 static READY: AtomicBool = AtomicBool::new(false);
 static PAT_WC: AtomicBool = AtomicBool::new(false);
-static MAP_LOCK: SpinLock<()> = SpinLock::new(());
+static MAP_LOCK: IrqSpinLock<()> = IrqSpinLock::new(());
 
 /// Why a paging operation failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

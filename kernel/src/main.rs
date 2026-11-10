@@ -11,8 +11,8 @@ pub mod console;
 pub mod logo;
 /// The UART command shell.
 pub mod shell;
-pub mod heap_test;
 mod global;
+pub mod selftest;
 
 use core::fmt::Write;
 use core::panic::PanicInfo;
@@ -26,7 +26,7 @@ use hal::services::addr::{PhysAddr, PhysRange};
 use hal::services::boot_info::BootInfo;
 use hal::services::cpu;
 use hal::services::framebuffer::FirmwareFramebuffer;
-use hal::services::heap::KernelHeap;
+use selftest::{heap_test, irq_test};
 
 /// Colors are `0x00RRGGBB`; the framebuffer's pixel format is applied by the HAL.
 const COLOR_BACKGROUND: u32 = 0x00_10_14_28;
@@ -92,6 +92,7 @@ fn draw_boot_marker(framebuffer: &FirmwareFramebuffer, status: &BootStatus) {
 
 const DEV_AUTO_SHUTDOWN_MS: Option<u64> = None;
 const DEV_HEAP_SELFTEST: bool = true;
+const DEV_IRQ_SELFTEST: bool = true;
 
 #[unsafe(no_mangle)]
 pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
@@ -131,10 +132,40 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
 
     hal::services::pmm::init(boot_info.memory_regions.as_slice(), &reserved[..reserved_count]).expect("Physical memory manager init failed");
 
+
+
     if DEV_HEAP_SELFTEST {
         heap_test::run(&HEAP);
         if let Some(uart) = serial {
+
             let _ = writeln!(SerialWriter(uart), "[+] Kernel heap self-test passed: {:?}", HEAP.stats());
+        }
+    }
+
+    // Interrupt controller. Interrupts stay masked on the CPU until something
+    // needs them; the self-test unmasks them only for its own duration.
+    if let Some(hardware) = hardware {
+        match hal::services::interrupts::init(hardware) {
+            Ok(()) => {
+                if DEV_IRQ_SELFTEST {
+                    let outcome = irq_test::run();
+                    if let Some(uart) = serial {
+                        match outcome {
+                            Ok(()) => { let _ = writeln!(SerialWriter(uart), "[+] Interrupt self-test passed"); }
+                            Err(why) => { let _ = writeln!(SerialWriter(uart), "[!] Interrupt self-test FAILED: {}", why); }
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                if let Some(uart) = serial {
+                    let _ = writeln!(SerialWriter(uart), "[!] No interrupt controller: {:?}", err);
+                }
+            }
+        }
+    } else {
+        if let Some(uart) = serial {
+            let _ = writeln!(SerialWriter(uart), "[!] boot_info.hardware is None");
         }
     }
 

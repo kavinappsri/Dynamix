@@ -57,5 +57,24 @@ svc_handler:            EXCEPTION_ENTRY 2
 prefetch_abort_handler: EXCEPTION_ENTRY 3
 data_abort_handler:     EXCEPTION_ENTRY 4
 reserved_handler:       EXCEPTION_ENTRY 5
-irq_handler:            EXCEPTION_ENTRY 6
+
+/*
+ * IRQ: the kernel runs in SVC mode, so rather than set up a stack for IRQ
+ * mode, the return state is pushed onto the SVC stack (srs), the core is
+ * switched to SVC (still masked), and the handler runs there. rfe returns
+ * and restores the interrupted CPSR in one go.
+ * The kernel is compiled soft-float, so no VFP/NEON state needs saving.
+ */
+irq_handler:
+    sub lr, lr, #4              /* address of the interrupted instruction */
+    srsdb sp!, #0x13            /* push {lr_irq, spsr_irq} on the SVC stack */
+    cps #0x13
+    push {r0-r4, r12, lr}       /* caller-saved + r4 (scratch below) + lr_svc */
+    mov r4, sp
+    bic sp, sp, #7              /* AAPCS: 8-byte aligned at calls */
+    bl armv7_irq_entry
+    mov sp, r4
+    pop {r0-r4, r12, lr}
+    rfeia sp!
+
 fiq_handler:            EXCEPTION_ENTRY 7

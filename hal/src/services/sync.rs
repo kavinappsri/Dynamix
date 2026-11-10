@@ -113,3 +113,49 @@ impl<'a, T> Drop for SpinLockGuard<'a, T> {
         self.lock.locked.store(0, Ordering::Release);
     }
 }
+
+pub struct IrqSpinLock<T> {
+    inner: SpinLock<T>,
+}
+
+impl<T> IrqSpinLock<T> {
+    pub const fn new(value: T) -> Self {
+        Self { inner: SpinLock::new(value) }
+    }
+
+    /// Masks interrupts, then takes the lock. The previous interrupt state is
+    /// restored when the guard drops.
+    pub fn lock(&self) -> IrqSpinLockGuard<'_, T> {
+        let state = crate::services::cpu::irq_save();
+        IrqSpinLockGuard {
+            guard: core::mem::ManuallyDrop::new(self.inner.lock()),
+            state,
+        }
+    }
+}
+
+pub struct IrqSpinLockGuard<'a, T> {
+    guard: core::mem::ManuallyDrop<SpinLockGuard<'a, T>>,
+    state: crate::services::cpu::IrqState,
+}
+
+impl<'a, T> core::ops::Deref for IrqSpinLockGuard<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.guard
+    }
+}
+
+impl<'a, T> core::ops::DerefMut for IrqSpinLockGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.guard
+    }
+}
+
+impl<'a, T> Drop for IrqSpinLockGuard<'a, T> {
+    fn drop(&mut self) {
+        // SAFETY: dropped exactly once, here.
+        unsafe { core::mem::ManuallyDrop::drop(&mut self.guard) };
+        crate::services::cpu::irq_restore(self.state);
+    }
+}

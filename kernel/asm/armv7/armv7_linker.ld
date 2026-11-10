@@ -49,6 +49,10 @@ SECTIONS {
         __start_power_domain_drivers = .;
         KEEP(*(.drivers.power_domain))
         __stop_power_domain_drivers = .;
+
+        __start_interrupt_drivers = .;
+        KEEP(*(.drivers.interrupt))
+        __stop_interrupt_drivers = .;
         __stop_drivers = .;
     }
 

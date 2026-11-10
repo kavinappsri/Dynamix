@@ -30,6 +30,15 @@ pub struct ExceptionContext {
     _pad: u64, // Padding to keep struct 16-byte aligned
 }
 
+const _: () = assert!(core::mem::size_of::<ExceptionContext>() == 288, "must match FRAME_SIZE in aarch64_vectors.s");
+
+/// Called by the IRQ vector once the interrupted context is saved. Lets the
+/// interrupt service ask the GIC what fired and run its handlers.
+#[unsafe(no_mangle)]
+extern "C" fn aarch64_irq_entry(_ctx: &mut ExceptionContext) {
+    crate::services::interrupts::handle_interrupt(None);
+}
+
 /// Installs the assembly exception table in `VBAR_EL1`.
 ///
 /// This must run at EL1 before exceptions are enabled.

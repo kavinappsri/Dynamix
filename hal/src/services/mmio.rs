@@ -43,6 +43,18 @@ impl Mmio {
         unsafe { ((self.base + offset) as *const u32).read_volatile() }
     }
 
+
+    /// Writes an 8-bit device register at `offset`.
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug builds if `base + offset` overflows `usize`.
+    #[inline(always)]
+    pub fn write8(self, offset: usize, value: u8) {
+        // SAFETY: see `read8`.
+        unsafe { ((self.base + offset) as *mut u8).write_volatile(value) }
+    }
+
     /// Writes a 32-bit device register at `offset`.
     ///
     /// # Panics

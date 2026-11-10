@@ -13,4 +13,5 @@ pub mod power;
 pub mod sync;
 pub mod timer;
 pub mod heap;
+pub mod interrupts;
 

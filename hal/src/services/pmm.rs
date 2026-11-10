@@ -3,7 +3,7 @@
 use crate::services::addr::{FRAME_SHIFT, PhysAddr, PhysRange};
 pub use crate::services::addr::{FRAME_SIZE, PhysFrame};
 use crate::services::mmu::{self, MmuError};
-use crate::services::sync::SpinLock;
+use crate::services::sync::IrqSpinLock;
 
 /// Highest supported buddy order:
 /// biggest block is `FRAME_SIZE << MAX_ORDER`,  currently 16MB
@@ -218,10 +218,10 @@ impl Pmm {
 }
 
 // SAFETY: Pmm's only non-Sync-by-default field is the frame_state slice,
-// which is exclusively accessed through the SpinLock below.
+// which is exclusively accessed through the IrqSpinLock below.
 unsafe impl Send for Pmm {}
 
-static PMM: SpinLock<Option<Pmm>> = SpinLock::new(None);
+static PMM: IrqSpinLock<Option<Pmm>> = IrqSpinLock::new(None);
 
 /// A frame-aligned `[start, end)` byte range excluded from the free pool --
 /// the kernel image, boot/device page tables, the firmware's tables, or the

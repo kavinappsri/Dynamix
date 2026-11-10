@@ -5,3 +5,4 @@ pub mod framebuffer;
 pub mod serial;
 pub mod driver;
 pub mod power_domain;
+pub mod interrupt_controller;

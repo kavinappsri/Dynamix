@@ -73,6 +73,9 @@ macro_rules! register_driver {
     ($name:ident, $compat:literal, $init_fn:expr, PowerDomainController) => {
         $crate::register_driver!(@internal $name, $compat, $init_fn, PowerDomainController, ".drivers.power_domain", ".drv$p1");
     };
+    ($name:ident, $compat:literal, $init_fn:expr, InterruptController) => {
+        $crate::register_driver!(@internal $name, $compat, $init_fn, InterruptController, ".drivers.interrupt", ".drv$i1");
+    };
 
     (@internal $name:ident, $compat:literal, $init_fn:expr, $dtype:path, $elf_section:literal, $pe_section:literal) => {
         #[used]
@@ -128,6 +131,10 @@ macro_rules! define_probe {
     (PowerDomainController, $fn_name:ident, $post_init:expr) => {
         $crate::define_probe!(@internal PowerDomainController, $fn_name, $post_init,
             "__start_power_domain_drivers", "__stop_power_domain_drivers", ".drv$p0", ".drv$p2", 0x5044_4330);
+    };
+    (InterruptController, $fn_name:ident, $post_init:expr) => {
+        $crate::define_probe!(@internal InterruptController, $fn_name, $post_init,
+            "__start_interrupt_drivers", "__stop_interrupt_drivers", ".drv$i0", ".drv$i2", 0x4952_5130);
     };
 
     (@internal $dtype:path, $fn_name:ident, $post_init:expr,

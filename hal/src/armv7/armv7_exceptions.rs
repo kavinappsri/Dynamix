@@ -44,6 +44,13 @@ pub fn init() {
     }
 }
 
+/// Called by the IRQ vector once the interrupted context is saved. Lets the
+/// interrupt service ask the GIC what fired and run its handlers.
+#[unsafe(no_mangle)]
+extern "C" fn armv7_irq_entry() {
+    crate::services::interrupts::handle_interrupt(None);
+}
+
 const VECTOR_NAMES: [&str; 8] = [
     "Reset",
     "Undefined Instruction",

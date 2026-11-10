@@ -54,7 +54,7 @@ impl MySerialDriver {
 }
 ```
 
-Let's say our UART has a write line at offset `0x00` and a write offset at `0x08`
+Let's say our UART has a write line at offset `0x00` and a read line offset at `0x08`
 
 ```rust
 use crate::services::mmio::Mmio;
@@ -148,7 +148,7 @@ fn init(resource: DeviceResource, _query: &dyn DeviceQuery) -> Result<&'static d
 }
 ```
 
-Now, we simply call the macro
+Now, we simply call the `register_driver` macro. This will link the driver into the binary
 
 ```rust
 use crate::services::mmio::Mmio;

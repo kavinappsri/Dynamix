@@ -12,3 +12,4 @@ pub mod x64_exceptions;
 pub mod x64_mmu;
 pub mod x64_power;
 pub mod x64_timer;
+pub mod x64_apic;

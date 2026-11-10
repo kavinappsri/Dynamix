@@ -13,7 +13,14 @@ global_asm!(include_str!("../asm/x86_64/x64_vectors.s"));
 #[allow(non_upper_case_globals)]
 unsafe extern "C" {
     static isr_stub_table: [usize; 32];
+    /// First of the 224 fixed-size entry stubs for vectors 32..=255.
+    static irq_stub_first: u8;
 }
+
+/// Bytes between consecutive external-interrupt stubs (see `x64_vectors.s`).
+const IRQ_STUB_SIZE: usize = 16;
+/// First vector that is not a CPU exception.
+pub const FIRST_EXTERNAL_VECTOR: u64 = 32;
 
 const GATE_PRESENT_INTERRUPT: u8 = 0x8E; // present, DPL0, 64-bit interrupt gate
 const VECTOR_BREAKPOINT: u64 = 3;
@@ -139,6 +146,12 @@ pub fn init() {
             idt[vector] = Gate::new(stub as u64, ist);
         }
 
+        let first_irq_stub = core::ptr::addr_of!(irq_stub_first) as usize;
+        for vector in FIRST_EXTERNAL_VECTOR as usize..256 {
+            let stub = first_irq_stub + (vector - FIRST_EXTERNAL_VECTOR as usize) * IRQ_STUB_SIZE;
+            idt[vector] = Gate::new(stub as u64, 0);
+        }
+
         let pointer = DescriptorTablePointer {
             limit: (core::mem::size_of::<[Gate; 256]>() - 1) as u16,
             base: idt.as_ptr() as u64,
@@ -195,9 +208,14 @@ fn paint(fb: &FirmwareFramebuffer, vector: u64) {
     }
 }
 
-/// Called by `isr_common` for every vector. Returns only for #BP.
+/// Called by `isr_common` for every vector. Returns for #BP and for external interrupts.
 #[unsafe(no_mangle)]
 pub extern "efiapi" fn x86_exception_handler(ctx: &mut ExceptionContext) {
+    if ctx.vector >= FIRST_EXTERNAL_VECTOR {
+        // External interrupt or IPI, not a fault: hand it to the interrupt service.
+        crate::services::interrupts::handle_interrupt(Some(ctx.vector as u32));
+        return;
+    }
     report(ctx);
     if ctx.vector == VECTOR_BREAKPOINT {
         return;

@@ -1,4 +1,4 @@
-// x86_64 exception entry stubs (vectors 0-31).
+// x86_64 exception and interrupt entry stubs (vectors 0-255).
 //
 // Every stub normalises the frame to
 //   [vector][error code (real or 0)][rip][cs][rflags][rsp][ss]
@@ -50,11 +50,17 @@ isr_common:
     push r14
     push r15
 
-    mov rcx, rsp
+    // The Rust handler may use SSE registers, and an interrupt can arrive
+    // anywhere, so the interrupted code's FPU/SSE state is saved around it.
     mov rbp, rsp
     and rsp, -16
+    sub rsp, 512
+    fxsave [rsp]
+    mov rcx, rbp
     sub rsp, 32
     call x86_exception_handler
+    add rsp, 32
+    fxrstor [rsp]
     mov rsp, rbp
 
     pop r15
@@ -74,6 +80,34 @@ isr_common:
     pop rax
     add rsp, 16
     iretq
+
+// Vectors 32-255 (external interrupts, IPIs). 224 identical 16-byte stubs:
+// `push 0` fills the error-code slot and `call irq_common` pushes an address
+// from which the vector is recovered, so no per-stub symbol or immediate is
+// needed. The Rust side computes each gate address as irq_stub_first + 16 * n.
+.balign 16
+.global irq_stub_first
+irq_stub_first:
+.rept 224
+    push 0
+    call irq_common
+    .balign 16
+.endr
+
+// The return address `call` pushed is stub_start + 7; turn it into the vector
+// in place, leaving [vector][error code 0][rip][cs][rflags][rsp][ss].
+irq_common:
+    push rax
+    push rcx
+    mov rax, [rsp + 16]
+    lea rcx, [rip + irq_stub_first]
+    sub rax, rcx
+    shr rax, 4
+    add rax, 32
+    mov [rsp + 16], rax
+    pop rcx
+    pop rax
+    jmp isr_common
 
 .section .rdata,"dr"
 .balign 8

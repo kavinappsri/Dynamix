@@ -44,11 +44,21 @@ impl RegionList {
 
 /// The firmware-provided hardware description, whichever form the platform
 /// handed the kernel.
+
 pub enum HardwareDescription<'a> {
     /// A Flattened Device Tree blob
     Fdt(Dtb<'a>),
     /// The ACPI tables
     Acpi(AcpiQuery),
+}
+
+impl core::fmt::Display for HardwareDescription<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            HardwareDescription::Fdt(_) => write!(f, "FDT"),
+            HardwareDescription::Acpi(_) => write!(f, "ACPI"),
+        }
+    }
 }
 
 impl<'a> DeviceQuery for HardwareDescription<'a> {

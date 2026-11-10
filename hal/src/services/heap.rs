@@ -9,7 +9,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::services::addr::FRAME_SIZE;
 use crate::services::pmm::{self, MAX_ORDER};
-use crate::services::sync::SpinLock;
+use crate::services::sync::IrqSpinLock;
 
 /// Block sizes served by small tier
 const CLASS_SIZES: [usize; 13] = [16, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 2048];
@@ -319,13 +319,13 @@ pub struct HeapStats {
 
 /// The kernel's general purpose allocator i.e. `global_alloc`
 pub struct KernelHeap {
-    small: SpinLock<SmallHeap>,
+    small: IrqSpinLock<SmallHeap>,
     large_frames: AtomicUsize,
 }
 
 impl KernelHeap {
     pub const fn new() -> Self {
-        Self { small: SpinLock::new(SmallHeap::new()), large_frames: AtomicUsize::new(0) }
+        Self { small: IrqSpinLock::new(SmallHeap::new()), large_frames: AtomicUsize::new(0) }
     }
 
     /// Gives every completely free small-tier frame back to the PMM and returns

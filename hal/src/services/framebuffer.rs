@@ -111,7 +111,6 @@ impl FirmwareFramebuffer {
         {
             return Err(FramebufferError::DestinationOutOfBounds);
         }
-
         for row in 0..source_height {
             for column in 0..source_width {
                 let pixel = self.format.encode(source[row * source_width + column]);

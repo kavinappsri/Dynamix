@@ -21,16 +21,15 @@ pub enum Command {
 /// Runs the command loop forever.
 pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
     let mut input_buffer = String::new();
-    let mut lower = String::new();
-    let mut args = Vec::<&str>::new();
+    let mut args: Vec<&str>;
 
     loop {
         console.write("dynamix <~ ");
         console.read_line(&mut input_buffer);
         console.writeln("");
 
-        lower = input_buffer.to_lowercase();
-        args = lower.split_whitespace().collect();
+        input_buffer = input_buffer.to_lowercase();
+        args = input_buffer.split_whitespace().collect();
 
         let cmd = match args.first() {
             Some(&"fill") => Command::Fill,
@@ -105,9 +104,8 @@ pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
                 let _ = writeln!(console, "Unknown command");
             }
         }
-        
+
         args.clear();
-        lower.clear();
         input_buffer.clear();
     }
 }
