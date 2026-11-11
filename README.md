@@ -17,7 +17,7 @@ as well learn how this thing works
 ### Perquisites
 
 To properly run this, you'll need a few things, such as
-1. QEMU / An actual device (if you're insane)
+1. QEMU (or) An actual device (if you're insane)
 2. Rust 2024 or newer
 3. OVMF (if you're targeting x86_64)
 4. Patience
@@ -48,6 +48,10 @@ The sequence is like this  - there is an entrypoint in the code for each archite
 Each entry must do a few things - turn on the mmu, enable some required hardware such as the one for FP, etc..., and 
 most importantly, construct and pass to the kernel a `BootInfo` struct, which contains information like a Device tree,
 reserved memory regions, etc... The kernel can then take that and do what it wants, i.e. make a shell. (ik this isn't
-a kernel is supposed to do, but trust me, i've been working on the `hal` for a bit of time, so the kernel is lacking)
+a kernel is supposed to do, but trust me, I've been working on the `hal` for a bit of time, so the kernel is lacking)
 
-Beyond this, you're gonna have to look at the source code yourself. Good Luck!
+I try to keep a `docs` folder with some useful information about how the code works. Now don't get you're hopes up, 
+because it isn't very likely you will find useful information there. If you're lost, however, something is better than 
+nothing
+
+Beyond that, you're gonna have to look at the source code yourself. Good Luck!
