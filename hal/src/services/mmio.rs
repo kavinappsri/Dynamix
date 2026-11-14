@@ -31,6 +31,17 @@ impl Mmio {
         unsafe { ((self.base + offset) as *const u8).read_volatile() }
     }
 
+    /// Reads a 16-bit device register at `offset`.
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug builds if `base + offset` overflows `usize`.
+    #[inline(always)]
+    pub fn read16(self, offset: usize) -> u16 {
+        // SAFETY: see `read8`.
+        unsafe { ((self.base + offset) as *const u16).read_volatile() }
+    }
+
     /// Reads a 32-bit device register at `offset`.
     ///
     /// # Panics
@@ -43,6 +54,16 @@ impl Mmio {
         unsafe { ((self.base + offset) as *const u32).read_volatile() }
     }
 
+    /// Reads a 64-bit device register at `offset`.
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug builds if `base + offset` overflows `usize`.
+    #[inline(always)]
+    pub fn read64(self, offset: usize) -> u64 {
+        // SAFETY: see `read8`.
+        unsafe { ((self.base + offset) as *const u64).read_volatile() }
+    }
 
     /// Writes an 8-bit device register at `offset`.
     ///

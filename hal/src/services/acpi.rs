@@ -4,7 +4,7 @@
 //! once mmu and pmm are up and working. So, currently the `alloc` / `allocator_api` are disabled
 //! in the `acpi` crate
 //!
-//! TODO: AML Interpreter via `aml` crate
+//! TODO: Switch to ACPICA
 
 
 use core::ptr::NonNull;
@@ -85,6 +85,11 @@ impl AcpiQuery {
         // SAFETY: upheld by this function's own contract.
         self.tables = unsafe { AcpiTables::from_rsdp(DynamixAcpiHandler, self.rsdp_address)? };
         Ok(())
+    }
+
+    /// Physical address of the RSDP this was built from.
+    pub fn rsdp_address(&self) -> usize {
+        self.rsdp_address
     }
 
     /// Physical range of the whole DSDT, SDT header included.

@@ -25,7 +25,7 @@ use hal::services::addr::{PhysAddr, PhysRange};
 use hal::services::boot_info::BootInfo;
 use hal::services::cpu;
 use hal::services::framebuffer::FirmwareFramebuffer;
-use selftest::{heap_test, irq_test};
+use selftest::{heap_test, irq_test, time_test, work_test};
 
 /// Colors are `0x00RRGGBB`; the framebuffer's pixel format is applied by the HAL.
 const COLOR_BACKGROUND: u32 = 0x00_10_14_28;
@@ -80,6 +80,17 @@ fn draw_boot_marker(framebuffer: &FirmwareFramebuffer, status: &BootStatus) {
 const DEV_AUTO_SHUTDOWN_MS: Option<u64> = None;
 const DEV_HEAP_SELFTEST: bool = true;
 const DEV_IRQ_SELFTEST: bool = true;
+const DEV_TIME_SELFTEST: bool = true;
+const DEV_WORK_SELFTEST: bool = true;
+
+/// Prints a self-test verdict to the serial port, if there is one.
+fn report_selftest(serial: Option<&dyn hal::Serial>, name: &str, outcome: Result<(), &'static str>) {
+    let Some(uart) = serial else { return };
+    let _ = match outcome {
+        Ok(()) => writeln!(SerialWriter(uart), "[+] {} self-test passed", name),
+        Err(why) => writeln!(SerialWriter(uart), "[!] {} self-test FAILED: {}", name, why),
+    };
+}
 
 #[unsafe(no_mangle)]
 pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
@@ -129,6 +140,10 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
         }
     }
 
+    if DEV_TIME_SELFTEST {
+        report_selftest(serial, "Timer", time_test::run());
+    }
+
     // Interrupt controller. Interrupts stay masked on the CPU until something
     // needs them; the self-test unmasks them only for its own duration.
     if let Some(hardware) = hardware {
@@ -154,6 +169,12 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
         if let Some(uart) = serial {
             let _ = writeln!(SerialWriter(uart), "[!] boot_info.hardware is None");
         }
+    }
+
+    // After the interrupt controller: its software-interrupt part is skipped
+    // when there is no controller.
+    if DEV_WORK_SELFTEST {
+        report_selftest(serial, "Work queue", work_test::run());
     }
 
     // SoC support drivers the display may depend on; a miss is fine.

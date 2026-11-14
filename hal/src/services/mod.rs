@@ -15,4 +15,7 @@ pub mod sync;
 pub mod timer;
 pub mod heap;
 pub mod interrupts;
+pub mod work;
+#[cfg(target_arch = "x86_64")]
+pub mod acpica_osl;
 

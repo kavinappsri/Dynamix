@@ -25,6 +25,8 @@
 //! uart.write_str("early boot complete\n");
 //! ```
 
+extern crate alloc;
+
 /// Aarch64 dependent features
 #[cfg(target_arch = "aarch64")]
 pub mod aarch64;

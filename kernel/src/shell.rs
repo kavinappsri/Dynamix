@@ -25,6 +25,10 @@ pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
     let mut input_buffer = String::new();
 
     loop {
+        // Deferred work (interrupt bottom halves) runs here, between commands.
+        // `read_line` below blocks, so nothing runs while a prompt is waiting.
+        hal::services::work::run_pending();
+
         // Cleared at the top, not the bottom: the usage branches below
         // `continue`, and a stale half-typed line must not leak into the next one.
         input_buffer.clear();
@@ -100,6 +104,9 @@ pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
                     "heap" => {
                         let stats = HEAP.stats();
                         let _ = writeln!(console, "{:#?}", stats);
+                    }
+                    "work" => {
+                        let _ = writeln!(console, "{:#?}", hal::services::work::stats());
                     }
                     _ => {
                         let _ = writeln!(console, "Unknown service");

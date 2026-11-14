@@ -40,3 +40,18 @@ pub fn delay_ms(ms: u64) {
     }
 }
 
+pub fn delay_us(us: u64) {
+    let frq = get_cntfrq();
+    let ticks_needed = frq.saturating_mul(us) / 1_000_000;
+    let start_ticks = get_cntpct();
+
+    while (get_cntpct() - start_ticks) < ticks_needed {
+        unsafe {
+            asm!("yield", options(nomem, nostack, preserves_flags));
+        }
+    }
+}
+
+pub fn now_ns() -> u64 {
+    crate::services::timer::ticks_to_ns(get_cntpct(), get_cntfrq())
+}

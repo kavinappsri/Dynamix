@@ -70,8 +70,19 @@ fn calibrate() -> Option<u64> {
 fn tsc_hz() -> u64 {
     match TSC_HZ.load(Ordering::Relaxed) {
         0 => {
-            let hz = calibrate().filter(|&hz| hz != 0).unwrap_or(FALLBACK_TSC_HZ);
-            TSC_HZ.store(hz, Ordering::Relaxed);
+            // Calibration owns the PIT for ~20 ms. Keep interrupts masked so a
+            // handler that reads the clock cannot start a second calibration
+            // on top of this one.
+            let state = crate::services::cpu::irq_save();
+            let hz = match TSC_HZ.load(Ordering::Relaxed) {
+                0 => {
+                    let hz = calibrate().filter(|&hz| hz != 0).unwrap_or(FALLBACK_TSC_HZ);
+                    TSC_HZ.store(hz, Ordering::Relaxed);
+                    hz
+                }
+                hz => hz,
+            };
+            crate::services::cpu::irq_restore(state);
             hz
         }
         hz => hz,
@@ -85,4 +96,18 @@ pub fn delay_ms(ms: u64) {
     while rdtsc().wrapping_sub(start) < ticks {
         core::hint::spin_loop();
     }
+}
+
+/// Busy-waits for at least `us` microseconds.
+pub fn delay_us(us: u64) {
+    let ticks = tsc_hz().saturating_mul(us) / 1_000_000;
+    let start = rdtsc();
+    while rdtsc().wrapping_sub(start) < ticks {
+        core::hint::spin_loop();
+    }
+}
+
+/// Nanoseconds of TSC time since the TSC started counting.
+pub fn now_ns() -> u64 {
+    crate::services::timer::ticks_to_ns(rdtsc(), tsc_hz())
 }
