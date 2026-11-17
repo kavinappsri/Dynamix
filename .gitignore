@@ -22,6 +22,7 @@ Device_Docs/
 # Added by cargo
 /target
 /.cargo/
+/kernel/target
 
 # Misc
 Archive.zip

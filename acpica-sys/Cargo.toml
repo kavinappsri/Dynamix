@@ -1,0 +1,15 @@
+[package]
+name = "acpica-sys"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+# Only one crate in the dependency graph may link ACPICA.
+links = "acpica"
+
+[lib]
+test = false
+bench = false
+
+[build-dependencies]
+cc = "1.2"
+bindgen = "0.73"

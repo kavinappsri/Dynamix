@@ -26,3 +26,8 @@ driver-rk3126-vop = ["driver-rk3126-cru"]
 
 [dependencies]
 acpi = { version = "=5.2.0", default-features = false}
+
+# ACPICA is only built for x86_64 (the only target with ACPI so far); the
+# other architectures need neither clang nor libclang.
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+acpica-sys = { path = "../acpica-sys" }

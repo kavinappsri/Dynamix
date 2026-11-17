@@ -24,6 +24,7 @@ use hal::driver_traits::serial::SerialWriter;
 use hal::services::addr::{PhysAddr, PhysRange};
 use hal::services::boot_info::BootInfo;
 use hal::services::cpu;
+use hal::services::device_query::DeviceQuery;
 use hal::services::framebuffer::FirmwareFramebuffer;
 use selftest::{heap_test, irq_test, time_test, work_test};
 
@@ -82,6 +83,7 @@ const DEV_HEAP_SELFTEST: bool = true;
 const DEV_IRQ_SELFTEST: bool = true;
 const DEV_TIME_SELFTEST: bool = true;
 const DEV_WORK_SELFTEST: bool = true;
+const DEV_ACPICA_SELFTEST: bool = true;
 
 /// Prints a self-test verdict to the serial port, if there is one.
 fn report_selftest(serial: Option<&dyn hal::Serial>, name: &str, outcome: Result<(), &'static str>) {
@@ -175,6 +177,14 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
     // when there is no controller.
     if DEV_WORK_SELFTEST {
         report_selftest(serial, "Work queue", work_test::run());
+    }
+
+    // ACPICA needs the heap and (for its SCI handler) the interrupt controller,
+    // and only exists where the platform hands us ACPI tables.
+    if DEV_ACPICA_SELFTEST {
+        if let Some(acpi) = hardware.and_then(|hardware| hardware.as_acpi()) {
+            report_selftest(serial, "ACPICA", hal::services::acpica::smoke_test(acpi.rsdp_address() as u64));
+        }
     }
 
     // SoC support drivers the display may depend on; a miss is fine.
