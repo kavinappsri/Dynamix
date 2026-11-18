@@ -24,7 +24,6 @@ use hal::driver_traits::serial::SerialWriter;
 use hal::services::addr::{PhysAddr, PhysRange};
 use hal::services::boot_info::BootInfo;
 use hal::services::cpu;
-use hal::services::device_query::DeviceQuery;
 use hal::services::framebuffer::FirmwareFramebuffer;
 use selftest::{heap_test, irq_test, time_test, work_test};
 
@@ -83,7 +82,6 @@ const DEV_HEAP_SELFTEST: bool = true;
 const DEV_IRQ_SELFTEST: bool = true;
 const DEV_TIME_SELFTEST: bool = true;
 const DEV_WORK_SELFTEST: bool = true;
-const DEV_ACPICA_SELFTEST: bool = true;
 
 /// Prints a self-test verdict to the serial port, if there is one.
 fn report_selftest(serial: Option<&dyn hal::Serial>, name: &str, outcome: Result<(), &'static str>) {
@@ -101,9 +99,11 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
 
     hal::services::mmu::init().expect("MMU init failed");
 
-    // Serial as early as the MMU allows, so later failures can be reported.
+    // Serial as early as the hardware description can name it. A device tree
+    // answers right away; ACPI cannot until its namespace is loaded, which
+    // needs the heap, so it gets another go below.
     let hardware = boot_info.hardware.as_ref();
-    let serial = hardware.and_then(|hardware| hal::probe_serial(hardware).ok());
+    let mut serial = hardware.and_then(|hardware| hal::probe_serial(hardware).ok());
 
     // Map an output device first, framebuffer in this case
     let mut framebuffer = None;
@@ -133,6 +133,16 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
     hal::services::pmm::init(boot_info.memory_regions.as_slice(), &reserved[..reserved_count]).expect("Physical memory manager init failed");
 
 
+    let hardware_init = hardware.map(|hardware| hardware.init());
+    if serial.is_none() {
+        serial = hardware.and_then(|hardware| hal::probe_serial(hardware).ok());
+    }
+    if let (Some(uart), Some(hardware), Some(init)) = (serial, hardware, &hardware_init) {
+        let _ = match init {
+            Ok(()) => writeln!(SerialWriter(uart), "[+] Hardware description ready: {}", hardware),
+            Err(err) => writeln!(SerialWriter(uart), "[!] Hardware description failed: {}", err),
+        };
+    }
 
     if DEV_HEAP_SELFTEST {
         heap_test::run(&HEAP);
@@ -179,11 +189,12 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
         report_selftest(serial, "Work queue", work_test::run());
     }
 
-    // ACPICA needs the heap and (for its SCI handler) the interrupt controller,
-    // and only exists where the platform hands us ACPI tables.
-    if DEV_ACPICA_SELFTEST {
-        if let Some(acpi) = hardware.and_then(|hardware| hardware.as_acpi()) {
-            report_selftest(serial, "ACPICA", hal::services::acpica::smoke_test(acpi.rsdp_address() as u64));
+    // Second stage of the hardware description (ACPI: ACPI mode, the SCI
+    // handler, the device initialization methods). It needs the interrupt
+    // controller, so it comes after it. A failure degrades, it does not stop boot.
+    if let Some(hardware) = hardware {
+        if let (Some(uart), Err(err)) = (serial, hardware.enable()) {
+            let _ = writeln!(SerialWriter(uart), "[!] Hardware description enable failed: {}", err);
         }
     }
 
@@ -201,7 +212,7 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
     if let Some(fb) = framebuffer {
         let status = BootStatus {
             memory_map: !boot_info.memory_regions.is_empty(),
-            hardware: hardware.is_some(),
+            hardware: matches!(hardware_init, Some(Ok(()))),
             pmm: matches!(hal::services::pmm::stats(), Ok((free, _)) if free > 0),
             power: power_ok,
         };

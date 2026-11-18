@@ -11,7 +11,8 @@ use super::exit::{self, ExitBootServicesError};
 use super::gop;
 use super::memory_map::{MemoryMap, MemoryMapError};
 use super::types::{self, EfiHandle, EfiStatus, EfiSystemTable};
-use crate::services::acpi::AcpiQuery;
+use crate::services::acpi::AcpiRoot;
+use crate::services::addr::PhysAddr;
 use crate::services::boot_info::{BootInfo, HardwareDescription, RegionList};
 use crate::x86_64::handoff;
 
@@ -25,7 +26,7 @@ pub extern "efiapi" fn efi_main(image_handle: EfiHandle, system_table: *mut EfiS
     let system_table_ref = unsafe { &*system_table };
     let boot_services = system_table_ref.boot_services;
     // SAFETY: valid until Boot Services exit, which happens below; `out` is
-    // not used afterwards.
+    // not used afterward.
     let mut out = unsafe { ConOut::new(system_table_ref.con_out) };
 
     let _ = writeln!(out, "Dynamix UEFI boot stage reached.");
@@ -45,23 +46,22 @@ pub extern "efiapi" fn efi_main(image_handle: EfiHandle, system_table: *mut EfiS
         }
     }
 
-    // --- ACPI: RSDP from the configuration table, then the tables behind it. ---
+
     // SAFETY: `system_table` is the valid table firmware gave us.
     match unsafe { config_table::locate_rsdp(system_table) } {
         Ok(rsdp) => {
-            let _ = writeln!(out, "[+] RSDP found (addr={:#x})", rsdp as usize);
             // SAFETY: firmware identity-maps the RSDP while Boot Services are alive.
-            match unsafe { AcpiQuery::from_rsdp(rsdp as usize) } {
-                Ok(query) => {
-                    let _ = writeln!(out, "[+] ACPI tables parsed (revision={}, tables={})", query.revision(), query.headers().count());
-                    boot.hardware = Some(HardwareDescription::Acpi(query));
+            match unsafe { config_table::check_rsdp(rsdp) } {
+                Ok(revision) => {
+                    let _ = writeln!(out, "[+] RSDP found (addr={:#x}, revision={})", rsdp as usize, revision);
+                    boot.hardware = Some(HardwareDescription::Acpi(AcpiRoot::new(PhysAddr::new(rsdp as usize))));
                 }
                 Err(_) => {
-                    let _ = writeln!(out, "[ ] ACPI table parsing failed");
+                    let _ = writeln!(out, "[ ] RSDP at {:#x} is not valid", rsdp as usize);
                 }
             }
         }
-        Err(RsdpError::NotFound) => {
+        Err(RsdpError::NotFound | RsdpError::Invalid) => {
             let _ = writeln!(out, "[ ] RSDP not found in configuration table");
         }
     }

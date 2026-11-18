@@ -42,8 +42,6 @@ pub mod driver_traits;
 pub mod x86_64;
 pub mod boot;
 
-#[cfg(target_arch = "x86_64")]
-pub use acpi;
 pub use driver_traits::framebuffer::{Framebuffer, FramebufferError};
 pub use driver_traits::serial::{Serial, active_serial, probe_serial};
 

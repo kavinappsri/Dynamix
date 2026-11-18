@@ -1,13 +1,5 @@
 //! x86_64 interrupt controller: the local APIC and the I/O APIC(s).
 //!
-//! # Numbering
-//!
-//! * `Irq` 0..256 are GSIs, routed through an I/O APIC to a dynamically
-//!   assigned vector (0x30..=0xDF), handed out the first time a line is enabled.
-//! * `Irq` 256..272 are software lines for self-IPIs (and, later, cross-core
-//!   IPIs), on fixed vectors 0xE0..=0xEF.
-//! * Vector 0xFF is the LAPIC spurious vector.
-//!
 //! # Not done yet
 //!
 //! * Routing is to the boot core only ([`set_affinity`] is unsupported): doing
@@ -19,11 +11,10 @@
 
 use core::arch::asm;
 
-use acpi::madt::{Madt, MadtEntry};
-
 use crate::driver_traits::interrupt_controller::{
     Claim, InterruptController, Irq, IrqError, Polarity, Trigger,
 };
+use crate::services::acpi::MadtEntry;
 use crate::services::addr::{PhysAddr, PhysRange};
 use crate::services::device_query::DeviceQuery;
 use crate::services::interrupts::IrqConfig;
@@ -347,9 +338,8 @@ pub fn init(hardware: &dyn DeviceQuery) -> Result<&'static dyn InterruptControll
     if !cpu_has_apic() {
         return Err(IrqError::NoController);
     }
-    let acpi = hardware.as_acpi().ok_or(IrqError::NoController)?;
-    let mapping = acpi.find_table::<Madt>().ok_or(IrqError::NoController)?;
-    let madt = mapping.get();
+    let acpi = hardware.as_acpi().and_then(|root| root.acpi()).ok_or(IrqError::NoController)?;
+    let madt = acpi.madt().map_err(|_| IrqError::NoController)?;
 
     let mut io_found = [None::<(u32, u32)>; MAX_IOAPICS]; // (address, gsi base)
     let mut io_count = 0;
@@ -361,14 +351,13 @@ pub fn init(hardware: &dyn DeviceQuery) -> Result<&'static dyn InterruptControll
 
     for entry in madt.entries() {
         match entry {
-            MadtEntry::IoApic(io) if io_count < MAX_IOAPICS => {
-                io_found[io_count] = Some((io.io_apic_address, io.global_system_interrupt_base));
+            MadtEntry::IoApic { address, gsi_base, .. } if io_count < MAX_IOAPICS => {
+                io_found[io_count] = Some((address, gsi_base));
                 io_count += 1;
             }
-            MadtEntry::InterruptSourceOverride(over) if over.bus == 0 && (over.irq as usize) < 16 => {
-                let flags = over.flags;
-                isa[over.irq as usize] = IsaLine {
-                    gsi: over.global_system_interrupt,
+            MadtEntry::InterruptOverride { bus: 0, source_irq, gsi, flags } if (source_irq as usize) < 16 => {
+                isa[source_irq as usize] = IsaLine {
+                    gsi,
                     // 0b00 means "conforms to the bus": ISA is edge, active high.
                     polarity: if flags & 0b11 == 0b11 { Polarity::ActiveLow } else { Polarity::ActiveHigh },
                     trigger: if (flags >> 2) & 0b11 == 0b11 { Trigger::Level } else { Trigger::Edge },

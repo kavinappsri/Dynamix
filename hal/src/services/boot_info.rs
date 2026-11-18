@@ -3,7 +3,7 @@
 //! I'm making this to make the kernel completely independent of the fdt
 //! thus eliminating the architecture issue
 
-use crate::services::acpi::AcpiQuery;
+use crate::services::acpi::{AcpiRoot, AcpiError};
 use crate::services::addr::PhysRange;
 use crate::services::device_query::{DeviceQuery, DeviceResource};
 use crate::services::dtb::Dtb;
@@ -42,21 +42,58 @@ impl RegionList {
     }
 }
 
+/// Why bringing up the hardware description failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HardwareError {
+    /// ACPI would not start.
+    Acpi(AcpiError),
+}
+
+impl From<AcpiError> for HardwareError {
+    fn from(err: AcpiError) -> Self {
+        HardwareError::Acpi(err)
+    }
+}
+
+impl core::fmt::Display for HardwareError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            HardwareError::Acpi(err) => write!(f, "ACPI: {err}"),
+        }
+    }
+}
+
 /// The firmware-provided hardware description, whichever form the platform
 /// handed the kernel.
-
 pub enum HardwareDescription<'a> {
     /// A Flattened Device Tree blob
     Fdt(Dtb<'a>),
-    /// The ACPI tables
-    Acpi(AcpiQuery),
+    /// ACPI: the RSDP, with ACPICA doing the reading (see [`AcpiRoot`]).
+    Acpi(AcpiRoot),
 }
+
+impl HardwareDescription<'_> {
+    pub fn init(&self) -> Result<(), HardwareError> {
+        match self {
+            HardwareDescription::Fdt(_) => Ok(()),
+            HardwareDescription::Acpi(acpi) => Ok(acpi.init()?),
+        }
+    }
+
+    pub fn enable(&self) -> Result<(), HardwareError> {
+        match self {
+            HardwareDescription::Fdt(_) => Ok(()),
+            HardwareDescription::Acpi(acpi) => Ok(acpi.enable()?),
+        }
+    }
+}
+
 
 impl core::fmt::Display for HardwareDescription<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             HardwareDescription::Fdt(_) => write!(f, "FDT"),
-            HardwareDescription::Acpi(_) => write!(f, "ACPI"),
+            HardwareDescription::Acpi(acpi) => write!(f, "{acpi}"),
         }
     }
 }
@@ -76,7 +113,7 @@ impl<'a> DeviceQuery for HardwareDescription<'a> {
         }
     }
 
-    fn as_acpi(&self) -> Option<&AcpiQuery> {
+    fn as_acpi(&self) -> Option<&AcpiRoot> {
         match self {
             HardwareDescription::Fdt(_) => None,
             HardwareDescription::Acpi(acpi) => Some(acpi),

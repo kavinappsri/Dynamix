@@ -1,43 +1,5 @@
 //! ACPICA's OS services layer (OSL):
-//!
-//! Everything ACPICA-shaped stays in this file: status codes, `flags` values
-//! for locks, size headers on allocations, handler trampolines, units of
-//! time. The services underneath keep their own APIs.
-//!
-//! Prototypes and status codes are taken from ACPICA's `acpiosxf.h`,
-//! `actypes.h` and `acexcep.h`. The `extern "C"` ABI is what a C compiler
-//! targeting this platform uses (on `x86_64-unknown-uefi`, the Windows x64
-//! one).
-//!
-//! # Execution model
-//!
-//! Single core, no threads. So:
-//! - Locks mask interrupts, and a lock found already held can only mean
-//!   recursion, which panics.
-//! - Semaphores are counters. A wait spins (it cannot wait for another
-//!   thread; only an interrupt could signal) until the timeout. A wait with no
-//!   timeout that lasts [`FOREVER_PANIC_NS`] panics instead of hanging.
-//! - `AcpiOsExecute` queues onto the kernel work queue; the kernel's main loop
-//!   runs it. See [`crate::services::work`].
-//! - Sleeping is a busy-wait.
-//!
-//! THIS WILL HAVE TO BE CHANGED ONCE MULTI-CORE FUNCTIONALITY IS ONLINE
-//!
-//! # What ACPICA's platform header has to say
-//!
-//! - `ACPI_USE_LOCAL_CACHE`: ACPICA keeps its own object caches, so the
-//!   `AcpiOsCreateCache` family is not needed.
-//! - `ACPI_MUTEX_TYPE` left at `ACPI_BINARY_SEMAPHORE` (the default): mutexes
-//!   are semaphores, so the `AcpiOsCreateMutex` family is not needed.
-//!
-//! # Not here
-//!
-//! `AcpiOsPrintf` / `AcpiOsVprintf` take C varargs, which stable Rust cannot
-//! define. A small C file in ACPICA's build should implement them by
-//! formatting with ACPICA's own `AcpiUtVsnprintf` and handing the result to
-//! [`dynamix_acpica_log_write`]. The debugger-only and table-lookup
-//! functions are not provided.
-//!
+//! 
 //! PCI configuration access is the legacy 0xCF8/0xCFC mechanism for segment 0
 //! only, kept private here; extended config space (ECAM) is not supported yet.
 
@@ -236,10 +198,6 @@ pub unsafe extern "C" fn AcpiOsFree(memory: *mut c_void) {
 
 /// Makes `[addr, addr + len)` reachable through the identity map.
 fn ensure_mapped(addr: u64, len: u64) -> bool {
-    if !mmu::is_ready() {
-        // Firmware's identity map is still the only one, and it covers this.
-        return true;
-    }
     const PAGE: u64 = 4096;
     let Some(end) = addr.checked_add(len.max(1)).and_then(|end| end.checked_add(PAGE - 1)) else {
         return false;

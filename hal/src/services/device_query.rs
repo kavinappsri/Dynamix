@@ -1,6 +1,6 @@
 //! Hardware discovery abstraction layer
 
-use crate::services::acpi::AcpiQuery;
+use crate::services::acpi::AcpiRoot;
 use crate::services::addr::PhysRange;
 use crate::services::dtb::Dtb;
 
@@ -41,7 +41,7 @@ pub trait DeviceQuery {
         None
     }
 
-    fn as_acpi(&self) -> Option<&AcpiQuery> {
+    fn as_acpi(&self) -> Option<&AcpiRoot> {
         None
     }
 }

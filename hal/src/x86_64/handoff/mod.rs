@@ -2,8 +2,7 @@ mod pe_image;
 pub mod paging;
 pub mod stack;
 
-use crate::services::acpi::AcpiQuery;
-use crate::services::boot_info::{BootInfo, HardwareDescription};
+use crate::services::boot_info::BootInfo;
 use crate::services::cpu;
 
 /// The address range the kernel image occupies right now, for diagnostics.
@@ -47,19 +46,5 @@ unsafe extern "efiapi" fn stage2(boot: *mut BootInfo<'static>) -> ! {
 
 
 unsafe extern "efiapi" fn higher_half_entry() -> ! {
-    // SAFETY: `stage2` stored the boot info before the jump.
-    let boot = unsafe { crate::boot::stored() };
-
-    // The ACPI query was built under firmware's page tables; its cached root
-    // table pointer is not mapped in ours. Re-read it before the kernel uses it.
-    let acpi_unusable = match &mut boot.hardware {
-        Some(HardwareDescription::Acpi(acpi)) => unsafe { AcpiQuery::remap(acpi) }.is_err(),
-        _ => false,
-    };
-    if acpi_unusable {
-        boot.hardware = None;
-    }
-
-    // SAFETY: the boot info is complete and `rust_main` never returns.
     unsafe { crate::boot::enter_kernel() }
 }
