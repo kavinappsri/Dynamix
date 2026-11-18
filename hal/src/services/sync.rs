@@ -87,6 +87,14 @@ impl<T> SpinLock<T> {
         }
         SpinLockGuard { lock:self }
     }
+
+    /// Takes the lock if it is free right now, without waiting.
+    pub fn try_lock(&self) -> Option<SpinLockGuard<'_, T>> {
+        self.locked
+            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+            .ok()
+            .map(|_| SpinLockGuard { lock: self })
+    }
 }
 
 pub struct SpinLockGuard<'a, T> {
@@ -130,6 +138,18 @@ impl<T> IrqSpinLock<T> {
         IrqSpinLockGuard {
             guard: core::mem::ManuallyDrop::new(self.inner.lock()),
             state,
+        }
+    }
+
+    /// Like [`lock`](Self::lock), but gives up if the lock is taken.
+    pub fn try_lock(&self) -> Option<IrqSpinLockGuard<'_, T>> {
+        let state = crate::services::cpu::irq_save();
+        match self.inner.try_lock() {
+            Some(guard) => Some(IrqSpinLockGuard { guard: core::mem::ManuallyDrop::new(guard), state }),
+            None => {
+                crate::services::cpu::irq_restore(state);
+                None
+            }
         }
     }
 }

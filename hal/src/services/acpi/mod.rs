@@ -19,6 +19,7 @@ mod sleep;
 mod subsystem;
 #[cfg(target_arch = "x86_64")]
 mod table;
+pub mod ec;
 
 #[cfg(target_arch = "x86_64")]
 pub use madt::{Madt, MadtEntries, MadtEntry};

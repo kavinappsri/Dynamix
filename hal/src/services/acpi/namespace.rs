@@ -41,6 +41,20 @@ impl<'a> Namespace<'a> {
         self.walk_devices(ptr::null_mut())
     }
 
+    /// The device at a namespace path like `\_SB.PCI0.LPCB.EC0`.
+    pub fn device_at(&self, path: &str) -> Result<Device, AcpiError> {
+        let mut name = [0u8; 128];
+        if path.is_empty() || path.len() >= name.len() || path.bytes().any(|byte| byte == 0) {
+            return Err(AcpiError::BadParameter);
+        }
+        name[..path.len()].copy_from_slice(path.as_bytes());
+
+        let mut handle: sys::ACPI_HANDLE = ptr::null_mut();
+        // SAFETY: NUL-terminated path, valid out-pointer.
+        check(unsafe { sys::AcpiGetHandle(ptr::null_mut(), name.as_ptr().cast(), &mut handle) })?;
+        NonNull::new(handle).map(|handle| Device { handle }).ok_or(AcpiError::NotFound)
+    }
+
     fn walk_devices(&self, id: *mut core::ffi::c_char) -> Result<Vec<Device>, AcpiError> {
         let mut found: Vec<Device> = Vec::new();
         // SAFETY: `id` is null or a NUL-terminated string that outlives the

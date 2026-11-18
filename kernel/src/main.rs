@@ -132,7 +132,9 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
 
     hal::services::pmm::init(boot_info.memory_regions.as_slice(), &reserved[..reserved_count]).expect("Physical memory manager init failed");
 
-
+    // First stage of the hardware description (ACPI: start ACPICA and load the
+    // namespace). It needs the heap, which is why it sits right after the
+    // physical memory manager.
     let hardware_init = hardware.map(|hardware| hardware.init());
     if serial.is_none() {
         serial = hardware.and_then(|hardware| hal::probe_serial(hardware).ok());

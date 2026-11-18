@@ -141,7 +141,7 @@ pub fn fatal(report: &FaultReport<'_>) -> ! {
     cpu::irq_disable();
 
     if FATAL.swap(true, Ordering::AcqRel) {
-        let _ = Out.write_str("\n!!! fault while reporting a fault, halting !!!\n");
+        let _ = Out.write_str("\n!!! Fault while reporting a fault, halting !!!\n");
         cpu::hlt_frvr();
     }
 
@@ -150,6 +150,10 @@ pub fn fatal(report: &FaultReport<'_>) -> ! {
     paint(report.class, report.code);
 
     print(report);
+    // The last things the kernel said are often the best clue. `Out` is the
+    // serial port (or COM1 before there is one), so this works early too.
+    let _ = writeln!(Out, "\nLast kernel log lines:");
+    crate::services::klog::dump_tail_nowait(&mut Out, 24);
     let _ = writeln!(Out, "\nSystem halted.");
     cpu::hlt_frvr()
 }

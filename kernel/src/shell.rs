@@ -17,6 +17,7 @@ pub enum Command {
     Shutdown,
     Stats,
     Crash,
+    Dmesg,
     Unknown,
 }
 
@@ -45,6 +46,7 @@ pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
             Some(&"shutdown") => Command::Shutdown,
             Some(&"stats") => Command::Stats,
             Some(&"crash") => Command::Crash,
+            Some(&"dmesg") => Command::Dmesg,
             _ => Command::Unknown,
         };
 
@@ -108,9 +110,19 @@ pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
                     "work" => {
                         let _ = writeln!(console, "{:#?}", hal::services::work::stats());
                     }
+                    "klog" => {
+                        let _ = writeln!(console, "{:#?}", hal::services::klog::stats());
+                    }
                     _ => {
                         let _ = writeln!(console, "Unknown service");
                     }
+                }
+            }
+            Command::Dmesg => {
+                let dumped = hal::services::klog::dump(console, 0);
+                let stats = hal::services::klog::stats();
+                if dumped.lost > 0 || stats.dropped > 0 {
+                    let _ = writeln!(console, "-- {} older records were overwritten --", stats.dropped);
                 }
             }
             Command::Crash => {

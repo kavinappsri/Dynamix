@@ -19,4 +19,5 @@ pub mod work;
 pub mod acpica_osl;
 pub mod acpica;
 pub mod acpi;
+pub mod klog;
 

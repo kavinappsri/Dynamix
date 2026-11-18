@@ -13,6 +13,7 @@ use crate::services::acpica_osl;
 use crate::services::addr::PhysAddr;
 use crate::services::cpu;
 use crate::services::sync::StaticCell;
+use crate::services::acpi::ec::EmbeddedController;
 
 /// How far ACPICA has come. Later levels include the earlier ones.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -107,6 +108,11 @@ impl Acpi {
         Madt::get()
     }
 
+    /// The EC
+    pub fn embedded_controller(&self) -> Option<&'static EmbeddedController> {
+        super::ec::get()
+    }
+
     /// The namespace, once it is loaded ([`AcpiLevel::Namespace`]).
     pub fn namespace(&self) -> Result<Namespace<'_>, AcpiError> {
         self.require(AcpiLevel::Namespace)?;
@@ -166,9 +172,11 @@ impl Acpi {
             }
             self.level.store(AcpiLevel::Enabled as u8, Ordering::Release);
 
-            // Address-space handlers other than memory/I/O/PCI config (the
-            // embedded controller's, later) go in right here: they have to be
-            // there before `_REG` methods run.
+            // Address-space handlers other than memory/I/O/PCI config go in
+            // right here: they have to be there before `_REG` methods run.
+            if let Ok(namespace) = self.namespace() {
+                super::ec::init(&namespace);
+            }
 
             check(sys::AcpiInitializeObjects(sys::ACPI_FULL_INITIALIZATION))
         }

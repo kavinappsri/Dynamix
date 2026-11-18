@@ -14,6 +14,7 @@ use core::ffi::c_void;
 use core::fmt::Write;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
+use crate::services::klog::{Source, Level, self};
 use crate::driver_traits::serial::{SerialWriter, active_serial};
 use crate::services::addr::{PhysAddr, PhysRange};
 use crate::services::cpu::{self, IrqState};
@@ -816,22 +817,20 @@ pub extern "C" fn AcpiOsRemoveInterruptHandler(number: u32, handler: Option<OsdH
 
 // -------------------------------- Output and signals --------------------------------
 
-/// Writes raw bytes to the kernel's serial console. The target for ACPICA's
-/// formatted output; see the module docs about `AcpiOsPrintf`.
+/// Hands ACPICA's formatted output to the kernel log, as source `acpi`. The
+/// target for `AcpiOsPrintf`; see the module docs.
 ///
 /// # Safety
 ///
 /// See function definition
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dynamix_acpica_log_write(buffer: *const u8, length: usize) {
-    let Some(uart) = active_serial() else { return };
     if buffer.is_null() {
         return;
     }
     // SAFETY: the caller passes `length` readable bytes.
-    for &byte in unsafe { core::slice::from_raw_parts(buffer, length) } {
-        uart.write_byte(byte);
-    }
+    let bytes = unsafe { core::slice::from_raw_parts(buffer, length) };
+    klog::write_fragment(Source::Acpi, Level::Info, bytes);
 }
 
 /// Fatal AML opcodes and breakpoints are logged and otherwise ignored, as
@@ -842,30 +841,26 @@ pub unsafe extern "C" fn dynamix_acpica_log_write(buffer: *const u8, length: usi
 /// See function definition
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn AcpiOsSignal(function: u32, info: *mut c_void) -> AcpiStatus {
-    let uart = active_serial();
     match function {
         ACPI_SIGNAL_FATAL => {
-            if let Some(uart) = uart {
-                if info.is_null() {
-                    let _ = writeln!(SerialWriter(uart), "[acpica] fatal AML opcode");
-                } else {
-                    // SAFETY: for this function ACPICA passes an `ACPI_SIGNAL_FATAL_INFO`.
-                    let info = unsafe { *(info as *const AcpiSignalFatalInfo) };
-                    let _ = writeln!(
-                        SerialWriter(uart),
-                        "[acpica] fatal AML opcode: type={:#x} code={:#x} argument={:#x}",
-                        info.kind,
-                        info.code,
-                        info.argument
-                    );
-                }
+            if info.is_null() {
+                klog::log(Source::Acpi, Level::Error, format_args!("Fatal AML opcode"));
+            } else {
+                // SAFETY: for this function ACPICA passes an `ACPI_SIGNAL_FATAL_INFO`.
+                let info = unsafe { *(info as *const AcpiSignalFatalInfo) };
+                klog::log(
+                    Source::Acpi,
+                    Level::Error,
+                    format_args!(
+                        "Fatal AML opcode: Type={:#x} Code={:#x} Argument={:#x}",
+                        info.kind, info.code, info.argument
+                    ),
+                );
             }
             AE_OK
         }
         ACPI_SIGNAL_BREAKPOINT => {
-            if let Some(uart) = uart {
-                let _ = writeln!(SerialWriter(uart), "[acpica] AML breakpoint");
-            }
+            klog::log(Source::Acpi, Level::Warn, format_args!("AML breakpoint"));
             AE_OK
         }
         _ => AE_BAD_PARAMETER,
