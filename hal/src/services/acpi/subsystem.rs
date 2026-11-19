@@ -12,6 +12,7 @@ use super::AcpiError;
 use crate::services::acpica_osl;
 use crate::services::addr::PhysAddr;
 use crate::services::cpu;
+use crate::services::klog::{Source, Level, self};
 use crate::services::sync::StaticCell;
 use crate::services::acpi::ec::EmbeddedController;
 
@@ -174,11 +175,22 @@ impl Acpi {
 
             // Address-space handlers other than memory/I/O/PCI config go in
             // right here: they have to be there before `_REG` methods run.
+
+            super::events::install_notify_logger();
             if let Ok(namespace) = self.namespace() {
                 super::ec::init(&namespace);
             }
 
-            check(sys::AcpiInitializeObjects(sys::ACPI_FULL_INITIALIZATION))
+            let objects = check(sys::AcpiInitializeObjects(sys::ACPI_FULL_INITIALIZATION));
+
+            // Events last, so no GPE method runs against a half-initialized
+            // namespace. A failure here only costs us events.
+            if let Err(err) = super::events::enable_gpes() {
+                klog::log(Source::Acpi, Level::Warn, format_args!("Could not enable GPEs: {err}"));
+            }
+            super::ec::start_events();
+
+            objects
         }
     }
 }

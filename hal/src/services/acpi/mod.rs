@@ -19,7 +19,12 @@ mod sleep;
 mod subsystem;
 #[cfg(target_arch = "x86_64")]
 mod table;
+#[cfg(target_arch = "x86_64")]
 pub mod ec;
+#[cfg(target_arch = "x86_64")]
+pub mod events;
+#[cfg(target_arch = "x86_64")]
+pub mod object;
 
 #[cfg(target_arch = "x86_64")]
 pub use madt::{Madt, MadtEntries, MadtEntry};
@@ -68,7 +73,7 @@ impl AcpiRoot {
     }
 
     /// Switches the hardware into ACPI mode: events, the SCI handler, and the
-    /// device/region initialisation methods (`_REG`, `_STA`, `_INI`).
+    /// device/region initialization methods (`_REG`, `_STA`, `_INI`).
     pub fn enable(&self) -> Result<(), AcpiError> {
         #[cfg(target_arch = "x86_64")]
         {

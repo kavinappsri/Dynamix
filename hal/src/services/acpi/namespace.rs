@@ -8,7 +8,7 @@ use core::ptr::{self, NonNull};
 
 use acpica_sys as sys;
 
-use super::raw::check;
+use super::raw::{c_name, check};
 use super::subsystem::Acpi;
 use super::AcpiError;
 
@@ -26,13 +26,7 @@ impl<'a> Namespace<'a> {
     /// `"ACPI0003"`, ...). ACPICA skips devices whose `_STA` says they are
     /// absent.
     pub fn devices(&self, id: &str) -> Result<Vec<Device>, AcpiError> {
-        let mut name = [0u8; 16];
-        // Short ids only: a PNP/ACPI id is 7 characters, a few firmware
-        // oddities go a bit longer. Reject the rest instead of truncating.
-        if id.is_empty() || id.len() >= name.len() || id.bytes().any(|byte| byte == 0) {
-            return Err(AcpiError::BadParameter);
-        }
-        name[..id.len()].copy_from_slice(id.as_bytes());
+        let mut name = c_name::<16>(id)?;
         self.walk_devices(name.as_mut_ptr().cast())
     }
 
@@ -43,11 +37,7 @@ impl<'a> Namespace<'a> {
 
     /// The device at a namespace path like `\_SB.PCI0.LPCB.EC0`.
     pub fn device_at(&self, path: &str) -> Result<Device, AcpiError> {
-        let mut name = [0u8; 128];
-        if path.is_empty() || path.len() >= name.len() || path.bytes().any(|byte| byte == 0) {
-            return Err(AcpiError::BadParameter);
-        }
-        name[..path.len()].copy_from_slice(path.as_bytes());
+        let name = c_name::<128>(path)?;
 
         let mut handle: sys::ACPI_HANDLE = ptr::null_mut();
         // SAFETY: NUL-terminated path, valid out-pointer.

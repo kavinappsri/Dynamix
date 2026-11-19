@@ -37,3 +37,13 @@ impl AcpiError {
 pub(super) fn check(status: u32) -> Result<(), AcpiError> {
     if sys::acpi_success(status) { Ok(()) } else { Err(AcpiError::from_status(status)) }
 }
+
+/// Copies `name` into a NUL-terminated buffer of `N` bytes, for ACPICA's C strings.
+pub(super) fn c_name<const N: usize>(name: &str) -> Result<[u8; N], AcpiError> {
+    if name.is_empty() || name.len() >= N || name.bytes().any(|byte| byte == 0) {
+        return Err(AcpiError::BadParameter);
+    }
+    let mut buffer = [0u8; N];
+    buffer[..name.len()].copy_from_slice(name.as_bytes());
+    Ok(buffer)
+}
