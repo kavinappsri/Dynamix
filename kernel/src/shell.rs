@@ -18,6 +18,8 @@ pub enum Command {
     Stats,
     Crash,
     Dmesg,
+    Sleep,
+    Uptime,
     Unknown,
 }
 
@@ -47,6 +49,8 @@ pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
             Some(&"stats") => Command::Stats,
             Some(&"crash") => Command::Crash,
             Some(&"dmesg") => Command::Dmesg,
+            Some(&"sleep") => Command::Sleep,
+            Some(&"uptime") => Command::Uptime,
             _ => Command::Unknown,
         };
 
@@ -110,6 +114,9 @@ pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
                     "work" => {
                         let _ = writeln!(console, "{:#?}", hal::services::work::stats());
                     }
+                    "timer" => {
+                        let _ = writeln!(console, "{:#?}", hal::services::timer::stats());
+                    }
                     "klog" => {
                         let _ = writeln!(console, "{:#?}", hal::services::klog::stats());
                     }
@@ -124,6 +131,20 @@ pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
                 if dumped.lost > 0 || stats.dropped > 0 {
                     let _ = writeln!(console, "-- {} older records were overwritten --", stats.dropped);
                 }
+            }
+            Command::Sleep => {
+                let Some(ms) = args.get(1).and_then(|ms| ms.parse::<u64>().ok()) else {
+                    let _ = writeln!(console, "Usage: sleep <milliseconds>");
+                    continue;
+                };
+                let start = hal::services::timer::now_ns();
+                hal::services::timer::sleep(core::time::Duration::from_millis(ms));
+                let elapsed_us = hal::services::timer::now_ns().wrapping_sub(start) / 1_000;
+                let _ = writeln!(console, "Slept {}.{:03} ms", elapsed_us / 1_000, elapsed_us % 1_000);
+            }
+            Command::Uptime => {
+                let ms = hal::services::timer::now_ns() / 1_000_000;
+                let _ = writeln!(console, "Up {}.{:03} s", ms / 1_000, ms % 1_000);
             }
             Command::Crash => {
                 let kind = match args.get(1).copied() {

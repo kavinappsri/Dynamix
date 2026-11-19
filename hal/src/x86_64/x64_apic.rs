@@ -4,7 +4,9 @@
 //!
 //! * Routing is to the boot core only ([`set_affinity`] is unsupported): doing
 //!   it properly needs the MADT processor list mapped to logical CPU ids.
-//! * No MSI/MSI-X, no LAPIC timer, no NMI wiring.
+//! * No MSI/MSI-X, no NMI wiring. The LAPIC timer is exposed as one fixed local
+//!   interrupt line ([`LOCAL_TIMER_IRQ`]) for the timer service; it is only
+//!   driven on the boot core, and TSC-deadline mode is not used.
 //! * The IMCR (for machines that gate the APIC behind it) is not touched.
 //!
 //! [`set_affinity`]: InterruptController::set_affinity
@@ -27,7 +29,15 @@ const MAX_IOAPICS: usize = 8;
 const GSI_COUNT: u32 = 256;
 const SOFTWARE_IRQ_BASE: u32 = GSI_COUNT;
 const SOFTWARE_IRQ_COUNT: u32 = 16;
-const IRQ_COUNT: u32 = SOFTWARE_IRQ_BASE + SOFTWARE_IRQ_COUNT;
+/// Interrupt lines that belong to one core's local APIC rather than to an I/O APIC pin.
+const LOCAL_IRQ_BASE: u32 = SOFTWARE_IRQ_BASE + SOFTWARE_IRQ_COUNT;
+const LOCAL_IRQ_COUNT: u32 = 1;
+const IRQ_COUNT: u32 = LOCAL_IRQ_BASE + LOCAL_IRQ_COUNT;
+
+/// The local APIC timer's interrupt, for the timer service.
+pub const LOCAL_TIMER_IRQ: Irq = Irq(LOCAL_IRQ_BASE);
+/// The vector the local APIC timer is programmed to raise.
+const LOCAL_TIMER_VECTOR: u8 = 0xF0;
 
 const FIRST_DYNAMIC_VECTOR: u8 = 0x30;
 const LAST_DYNAMIC_VECTOR: u8 = 0xDF;
@@ -45,6 +55,13 @@ const LAPIC_TPR: usize = 0x80;
 const LAPIC_EOI: usize = 0xB0;
 const LAPIC_SVR: usize = 0xF0;
 const LAPIC_ICR_LOW: usize = 0x300;
+const LAPIC_LVT_TIMER: usize = 0x320;
+const LAPIC_TIMER_INITIAL: usize = 0x380;
+const LAPIC_TIMER_CURRENT: usize = 0x390;
+const LAPIC_TIMER_DIVIDE: usize = 0x3E0;
+const LVT_MASKED: u32 = 1 << 16;
+/// Divide configuration value for "divide by 16" (one-shot mode is LVT bits 17-18 = 0).
+const TIMER_DIVIDE_BY_16: u32 = 0b0011;
 const LAPIC_SVR_ENABLE: u32 = 1 << 8;
 const MSR_X2APIC_SELF_IPI: u32 = 0x83F;
 
@@ -262,7 +279,9 @@ impl InterruptController for Apic {
             // Spurious interrupts must not be EOI'd.
             return None;
         }
-        let irq = if vector >= FIRST_SOFTWARE_VECTOR && vector < FIRST_SOFTWARE_VECTOR + SOFTWARE_IRQ_COUNT as u8 {
+        let irq = if vector == LOCAL_TIMER_VECTOR {
+            LOCAL_TIMER_IRQ.0
+        } else if vector >= FIRST_SOFTWARE_VECTOR && vector < FIRST_SOFTWARE_VECTOR + SOFTWARE_IRQ_COUNT as u8 {
             SOFTWARE_IRQ_BASE + (vector - FIRST_SOFTWARE_VECTOR) as u32
         } else {
             match self.dynamic.lock().vector_to_irq[vector as usize] {
@@ -284,7 +303,7 @@ impl InterruptController for Apic {
     }
 
     fn raise_self(&self, irq: Irq) -> Result<(), IrqError> {
-        if irq.0 < SOFTWARE_IRQ_BASE || irq.0 >= IRQ_COUNT {
+        if irq.0 < SOFTWARE_IRQ_BASE || irq.0 >= LOCAL_IRQ_BASE {
             return Err(IrqError::Unsupported);
         }
         self.lapic.self_ipi(FIRST_SOFTWARE_VECTOR + (irq.0 - SOFTWARE_IRQ_BASE) as u8);
@@ -297,6 +316,32 @@ pub fn isa_irq(line: u8) -> Option<IrqConfig> {
     let apic = APIC.get()?;
     let isa = apic.isa.get(line as usize)?;
     Some(IrqConfig { irq: Irq(isa.gsi), trigger: isa.trigger, polarity: isa.polarity })
+}
+
+// -------------------------------- Local timer --------------------------------
+
+/// Starts a one-shot countdown of `initial` ticks. `masked` counts without
+/// raising the interrupt (for calibration). Does nothing before [`init`].
+pub fn lapic_timer_program(initial: u32, masked: bool) {
+    let Some(apic) = APIC.get() else { return };
+    let lapic = apic.lapic;
+    lapic.write(LAPIC_TIMER_DIVIDE, TIMER_DIVIDE_BY_16);
+    lapic.write(LAPIC_LVT_TIMER, LOCAL_TIMER_VECTOR as u32 | if masked { LVT_MASKED } else { 0 });
+    // Writing the initial count is what starts the countdown.
+    lapic.write(LAPIC_TIMER_INITIAL, initial);
+}
+
+/// Stops the countdown and masks the timer's interrupt.
+pub fn lapic_timer_stop() {
+    let Some(apic) = APIC.get() else { return };
+    let lapic = apic.lapic;
+    lapic.write(LAPIC_LVT_TIMER, LVT_MASKED | LOCAL_TIMER_VECTOR as u32);
+    lapic.write(LAPIC_TIMER_INITIAL, 0);
+}
+
+/// Ticks left in the countdown.
+pub fn lapic_timer_remaining() -> u32 {
+    APIC.get().map_or(0, |apic| apic.lapic.read(LAPIC_TIMER_CURRENT))
 }
 
 /// Parks the legacy 8259 PICs: remapped clear of the CPU exception vectors,

@@ -115,6 +115,23 @@ pub fn irqs_enabled() -> bool {
     return state.0 & (1 << 7) == 0;
 }
 
+/// Unmasks interrupts and idles the core until one arrives
+#[inline]
+pub fn irq_enable_and_wait() {
+    // SAFETY: idles the core and unmasks interrupts, nothing else. On x86 the
+    // instruction after `sti` runs before any interrupt is taken, so `hlt` is
+    // reached with the wake-up still pending. ARM's `wfi` wakes on a pending
+    // interrupt even while it is masked.
+    unsafe {
+        #[cfg(target_arch = "x86_64")]
+        core::arch::asm!("sti", "hlt", options(nomem, nostack));
+        #[cfg(target_arch = "aarch64")]
+        core::arch::asm!("wfi", "msr daifclr, #2", options(nomem, nostack));
+        #[cfg(target_arch = "arm")]
+        core::arch::asm!("wfi", "cpsie i", options(nomem, nostack));
+    }
+}
+
 /// Idles the core until the next interrupt (or event) arrives.
 #[inline]
 pub fn wait_for_interrupt() {

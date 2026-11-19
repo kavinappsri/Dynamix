@@ -1,10 +1,14 @@
-//! busy waits for x86_64.
+//! Time for x86_64: busy-waits and the clock on the TSC, and the one-shot
+//! event timer (the local APIC timer) behind the interrupt-driven timers.
 
 
 use core::arch::asm;
 use core::sync::atomic::{AtomicU64, Ordering};
 
+use crate::services::interrupts::Irq;
+use crate::services::timer::ns_to_ticks;
 use crate::x86_64::port::{inb, outb};
+use crate::x86_64::x64_apic;
 
 const PIT_HZ: u64 = 1_193_182;
 /// PIT reload value for the calibration window: 23864 / 1193182 Hz ~= 20 ms.
@@ -22,6 +26,11 @@ const PORT_B_SPEAKER: u8 = 1 << 1;
 const PORT_B_OUT2: u8 = 1 << 5;
 
 static TSC_HZ: AtomicU64 = AtomicU64::new(0);
+/// Ticks per second of the local APIC timer (after its divider); 0 until calibrated.
+static LAPIC_TIMER_HZ: AtomicU64 = AtomicU64::new(0);
+
+/// How long the local APIC timer is measured against the TSC.
+const LAPIC_CALIBRATION_US: u64 = 10_000;
 
 #[inline]
 fn rdtsc() -> u64 {
@@ -110,4 +119,43 @@ pub fn delay_us(us: u64) {
 /// Nanoseconds of TSC time since the TSC started counting.
 pub fn now_ns() -> u64 {
     crate::services::timer::ticks_to_ns(rdtsc(), tsc_hz())
+}
+
+/// Calibrates the local APIC timer against the TSC and leaves it stopped.
+/// Returns the interrupt it raises, or `None` if the APIC is not running or
+/// its timer does not count.
+pub fn event_init() -> Option<Irq> {
+    let state = crate::services::cpu::irq_save();
+
+    // Counting but masked, so the measurement cannot raise an interrupt.
+    x64_apic::lapic_timer_program(u32::MAX, true);
+    delay_us(LAPIC_CALIBRATION_US);
+    let counted = (u32::MAX - x64_apic::lapic_timer_remaining()) as u64;
+    x64_apic::lapic_timer_stop();
+
+    crate::services::cpu::irq_restore(state);
+
+    if counted == 0 {
+        return None;
+    }
+    LAPIC_TIMER_HZ.store(counted * 1_000_000 / LAPIC_CALIBRATION_US, Ordering::Relaxed);
+    Some(x64_apic::LOCAL_TIMER_IRQ)
+}
+
+/// Fires the timer interrupt when `now_ns()` reaches `deadline_ns`.
+///
+/// The counter is 32 bits wide, so a far-away deadline is reached in steps:
+/// the interrupt arrives early, finds nothing expired, and the timer service
+/// arms it again for the remainder.
+pub fn event_arm(deadline_ns: u64) {
+    let hz = LAPIC_TIMER_HZ.load(Ordering::Relaxed);
+    let remaining_ns = deadline_ns.saturating_sub(now_ns());
+    // At least one tick: zero would mean "stopped".
+    let ticks = ns_to_ticks(remaining_ns, hz).clamp(1, u32::MAX as u64) as u32;
+    x64_apic::lapic_timer_program(ticks, false);
+}
+
+/// Stops the timer.
+pub fn event_disarm() {
+    x64_apic::lapic_timer_stop();
 }

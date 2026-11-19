@@ -99,9 +99,7 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
 
     hal::services::mmu::init().expect("MMU init failed");
 
-    // Serial as early as the hardware description can name it. A device tree
-    // answers right away; ACPI cannot until its namespace is loaded, which
-    // needs the heap, so it gets another go below.
+    // Serial as early as the hardware description can name it.
     let hardware = boot_info.hardware.as_ref();
     let mut serial = hardware.and_then(|hardware| hal::probe_serial(hardware).ok());
 
@@ -131,10 +129,7 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
     }
 
     hal::services::pmm::init(boot_info.memory_regions.as_slice(), &reserved[..reserved_count]).expect("Physical memory manager init failed");
-
-    // First stage of the hardware description (ACPI: start ACPICA and load the
-    // namespace). It needs the heap, which is why it sits right after the
-    // physical memory manager.
+    
     let hardware_init = hardware.map(|hardware| hardware.init());
     if serial.is_none() {
         serial = hardware.and_then(|hardware| hal::probe_serial(hardware).ok());
@@ -158,8 +153,7 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
         report_selftest(serial, "Timer", time_test::run());
     }
 
-    // Interrupt controller. Interrupts stay masked on the CPU until something
-    // needs them; the self-test unmasks them only for its own duration.
+    // Interrupt controller
     if let Some(hardware) = hardware {
         match hal::services::interrupts::init(hardware) {
             Ok(()) => {
@@ -185,19 +179,29 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
         }
     }
 
-    // After the interrupt controller: its software-interrupt part is skipped
-    // when there is no controller.
+
     if DEV_WORK_SELFTEST {
         report_selftest(serial, "Work queue", work_test::run());
     }
-
-    // Second stage of the hardware description (ACPI: ACPI mode, the SCI
-    // handler, the device initialization methods). It needs the interrupt
-    // controller, so it comes after it. A failure degrades, it does not stop boot.
+    
     if let Some(hardware) = hardware {
         if let (Some(uart), Err(err)) = (serial, hardware.enable()) {
             let _ = writeln!(SerialWriter(uart), "[!] Hardware description enable failed: {}", err);
         }
+    }
+
+    // The interrupt-driven timers
+    if hal::services::interrupts::is_ready() {
+        if let Some(hardware) = hardware {
+            let timer_ready = hal::services::timer::init(hardware);
+            if let Some(uart) = serial {
+                let _ = match &timer_ready {
+                    Ok(()) => writeln!(SerialWriter(uart), "[+] Interrupt timer ready"),
+                    Err(err) => writeln!(SerialWriter(uart), "[!] Interrupt timer unavailable: {:?}", err),
+                };
+            }
+        }
+        cpu::irq_enable();
     }
 
     // SoC support drivers the display may depend on; a miss is fine.
@@ -221,9 +225,7 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
         draw_boot_marker(&fb, &status);
     }
 
-    // Real display driver if the platform has one, otherwise whatever the
-    // firmware left us. Probing only reports what it found; this is where
-    // the kernel decides what a miss means.
+    // Real display driver if the platform has one
     let display: Option<&'static dyn Framebuffer> = hardware
         .and_then(|hardware| hal::driver_traits::framebuffer::probe_framebuffer(hardware).ok())
         .or_else(|| hal::services::exceptions::fault_framebuffer().map(|fb| fb as &'static dyn Framebuffer));

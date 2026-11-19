@@ -2,6 +2,17 @@
 
 use core::arch::asm;
 
+use crate::services::device_query::DeviceQuery;
+use crate::services::interrupts::Irq;
+use crate::services::timer::ns_to_ticks;
+
+/// The non-secure physical timer's PPI on every board seen so far, used when
+/// the device tree does not say.
+const FALLBACK_TIMER_IRQ: Irq = Irq(30);
+
+/// CNTP_CTL_EL0: timer enabled, interrupt not masked.
+const CTL_ENABLE: u64 = 1;
+
 #[inline(always)]
 fn get_cntfrq() -> u64 {
     let val: u64;
@@ -54,4 +65,38 @@ pub fn delay_us(us: u64) {
 
 pub fn now_ns() -> u64 {
     crate::services::timer::ticks_to_ns(get_cntpct(), get_cntfrq())
+}
+
+#[inline(always)]
+fn set_cntp_cval(value: u64) {
+    // SAFETY: programs the physical timer's compare value, nothing else.
+    unsafe {
+        asm!("msr cntp_cval_el0, {}", "isb", in(reg) value, options(nomem, nostack, preserves_flags));
+    }
+}
+
+#[inline(always)]
+fn set_cntp_ctl(value: u64) {
+    // SAFETY: programs the physical timer's control register, nothing else.
+    unsafe {
+        asm!("msr cntp_ctl_el0, {}", "isb", in(reg) value, options(nomem, nostack, preserves_flags));
+    }
+}
+
+/// Leaves the event timer (the physical timer) disarmed and returns its interrupt.
+pub fn event_init(hardware: &dyn DeviceQuery) -> Irq {
+    set_cntp_ctl(0);
+    crate::services::timer::arm_timer_irq_from_dt(hardware).unwrap_or(FALLBACK_TIMER_IRQ)
+}
+
+/// Fires the timer interrupt when `now_ns()` reaches `deadline_ns`.
+pub fn event_arm(deadline_ns: u64) {
+    // The comparator is absolute, on the same counter `now_ns` reads.
+    set_cntp_cval(ns_to_ticks(deadline_ns, get_cntfrq()));
+    set_cntp_ctl(CTL_ENABLE);
+}
+
+/// Stops the timer; the interrupt line deasserts.
+pub fn event_disarm() {
+    set_cntp_ctl(0);
 }
