@@ -2,13 +2,11 @@
 //!
 //! Referenced from the corresponding driver for linux and the rk3128 TRM (ch14)
 
-use crate::driver_traits::driver::Driver;
-use crate::driver_traits::driver::DriverProbeError;
-use crate::driver_traits::power_domain::{PowerDomainController, PowerDomainError};
-use crate::register_driver;
-use crate::services::device_query::DeviceQuery;
+use crate::driver;
+use crate::driver_traits::driver::{Match, ProbeError};
+use crate::driver_traits::power_domain::{self, PowerDomainController, PowerDomainError};
+use crate::services::device::Device;
 use crate::services::mmio::Mmio;
-use crate::services::sync::StaticCell;
 use crate::services::timer::delay_ms;
 
 const PMU_PWRDN_CON: usize = 0x04;
@@ -72,10 +70,8 @@ pub struct Rk3126Pmu {
 unsafe impl Sync for Rk3126Pmu {}
 
 impl Rk3126Pmu {
-    unsafe fn new(base: usize) -> Self {
-        Self {
-            regs: unsafe { Mmio::new(base) },
-        }
+    fn new(regs: Mmio) -> Self {
+        Self { regs }
     }
 
     /// Sets or clears a single bit at `offset`, read-modify-write
@@ -143,11 +139,14 @@ impl PowerDomainController for Rk3126Pmu {
     }
 }
 
-fn init_rk3126_pmu(resource: crate::services::device_query::DeviceResource, _tree: &dyn DeviceQuery) -> Result<&'static dyn PowerDomainController, DriverProbeError> {
-    let base = resource.mmio_base().ok_or(DriverProbeError::WrongResource)?;
-    static INSTANCE: StaticCell<Rk3126Pmu> = StaticCell::uninit();
-    let pmu = unsafe { Rk3126Pmu::new(base) };
-    Ok(INSTANCE.get_or_init(|| pmu))
+fn probe(dev: &'static Device) -> Result<(), ProbeError> {
+    let regs = dev.mem(0)?.mmio();
+    power_domain::register(dev, Rk3126Pmu::new(regs));
+    Ok(())
 }
 
-register_driver!(RK3126_PMU, "rockchip,rk3128-pmu", init_rk3126_pmu, PowerDomainController);
+driver! {
+    name: "rk3126-pmu",
+    matches: [Match::Fdt("rockchip,rk3128-pmu")],
+    probe: probe,
+}

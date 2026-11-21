@@ -1,14 +1,13 @@
 //! Interfaces shared by serial devices.
 
-use crate::services::sync::StaticCell;
-use crate::define_probe;
+use alloc::boxed::Box;
 
-static ACTIVE_SERIAL: StaticCell<&'static dyn Serial> = StaticCell::uninit();
+use crate::services::device::Device;
+use crate::services::registry::{Class, Entry, Iter};
+
+static SERIALS: Class<dyn Serial> = Class::new();
 
 /// A polling serial device.
-///
-/// Interrupt and configuration support belong in the driver once the kernel has
-/// the infrastructure to use them.
 pub trait Serial: Sync {
     /// Blocks until `byte` has been transmitted.
     fn write_byte(&self, byte: u8);
@@ -16,13 +15,7 @@ pub trait Serial: Sync {
     /// Blocks until a byte has been received.
     fn read_byte(&self) -> u8;
 
-    /// Writes a UTF-8 string without allocating.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// uart.write_str("booting...\n");
-    /// ```
+    /// Writes a UTF-8 string
     fn write_str(&self, value: &str) {
         for byte in value.bytes() {
             self.write_byte(byte);
@@ -40,12 +33,21 @@ impl core::fmt::Write for SerialWriter<'_> {
     }
 }
 
-/// Returns the serial device selected by [`crate::probe_serial`], if boot discovery
-/// completed successfully.
+/// The console: the first serial port that was bound, if any.
+///
+/// Lock-free and allocation-free, so the panic and fault paths can use it.
 pub fn active_serial() -> Option<&'static dyn Serial> {
-    ACTIVE_SERIAL.get().copied()
+    SERIALS.primary()
 }
 
+/// Every serial port that was bound, in the order they were bound.
+pub fn serials() -> Iter<Entry<dyn Serial>> {
+    SERIALS.iter()
+}
 
-define_probe!(Serial, probe_serial, |driver| { ACTIVE_SERIAL.get_or_init(|| driver); } );
-
+/// Called by a driver's probe to hand over the serial port it started on `device`.
+pub fn register(device: &'static Device, uart: impl Serial + 'static) -> &'static dyn Serial {
+    let uart: &'static dyn Serial = Box::leak(Box::new(uart));
+    SERIALS.register(device, uart);
+    uart
+}

@@ -20,6 +20,7 @@ pub enum Command {
     Dmesg,
     Sleep,
     Uptime,
+    Lsdev,
     Unknown,
 }
 
@@ -51,6 +52,7 @@ pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
             Some(&"dmesg") => Command::Dmesg,
             Some(&"sleep") => Command::Sleep,
             Some(&"uptime") => Command::Uptime,
+            Some(&"lsdev") => Command::Lsdev,
             _ => Command::Unknown,
         };
 
@@ -145,6 +147,21 @@ pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
             Command::Uptime => {
                 let ms = hal::services::timer::now_ns() / 1_000_000;
                 let _ = writeln!(console, "Up {}.{:03} s", ms / 1_000, ms % 1_000);
+            }
+            Command::Lsdev => {
+                // Devices no driver in this kernel knows are left out unless asked for.
+                let all = args.get(1).copied() == Some("all");
+                for device in hal::services::device::devices() {
+                    let state = device.state();
+                    if !all && state == hal::services::device::State::NoDriver {
+                        continue;
+                    }
+                    let _ = write!(console, "{:<28} {}", device.name(), state);
+                    if let Ok(spec) = device.irq(0) {
+                        let _ = write!(console, ", irq {} ({:?}, {:?})", spec.irq.0, spec.trigger, spec.polarity);
+                    }
+                    let _ = writeln!(console);
+                }
             }
             Command::Crash => {
                 let kind = match args.get(1).copied() {

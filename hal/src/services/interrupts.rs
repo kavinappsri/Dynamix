@@ -12,10 +12,11 @@ use core::sync::atomic::{AtomicU16, AtomicU32, AtomicUsize, Ordering};
 pub use crate::driver_traits::interrupt_controller::{
     Claim, CpuId, InterruptController, Irq, IrqError, Polarity, Trigger,
 };
-use crate::driver_traits::interrupt_controller::{active_interrupt_controller, set_active_interrupt_controller};
-#[cfg(not(target_arch = "x86_64"))]
-use crate::driver_traits::interrupt_controller::probe_interrupt_controller;
-use crate::services::device_query::DeviceQuery;
+use crate::driver_traits::driver::ProbeError;
+use crate::driver_traits::interrupt_controller::{
+    active_interrupt_controller, primary_interrupt_controller, set_active_interrupt_controller,
+};
+use crate::services::device::Device;
 use crate::services::sync::IrqSpinLock;
 
 /// Highest interrupt number the handler table can hold, plus one.
@@ -85,18 +86,16 @@ const _: () = assert!(MAX_HANDLERS < NO_SLOT as usize);
 
 // -------------------------------- Bring Up --------------------------------
 
-/// Finds and initializes the interrupt controller of this device
-pub fn init(hardware: &dyn DeviceQuery) -> Result<(), IrqError> {
+/// Picks the interrupt controller to use and initializes it on this CPU.
+///
+/// The controller's driver was probed with the rest of the devices
+/// ([`crate::services::device::init`]), so run this after that.
+pub fn init() -> Result<(), IrqError> {
     if active_interrupt_controller().is_some() {
         return Err(IrqError::AlreadyInitialized);
     }
 
-    #[cfg(target_arch = "x86_64")]
-    let controller: &'static dyn InterruptController = crate::x86_64::x64_apic::init(hardware)?;
-    #[cfg(not(target_arch = "x86_64"))]
-    let controller: &'static dyn InterruptController =
-        probe_interrupt_controller(hardware).map_err(|_| IrqError::NoController)?;
-
+    let controller = primary_interrupt_controller().ok_or(IrqError::NoController)?;
     set_active_interrupt_controller(controller);
     controller.init_this_cpu()
 }
@@ -196,9 +195,23 @@ pub fn unregister(handle: IrqHandle) -> Result<(), IrqError> {
     Ok(())
 }
 
-/// Registers `handler`, programs the line's trigger and polarity, and enables
-/// it: the usual sequence for a driver.
-pub fn request(
+/// Hooks `handler` to the `index`th interrupt of `device`, programs the
+/// line the way the firmware says it is wired, and enables it: the usual
+/// sequence for a driver.
+///
+/// A driver whose interrupt controller has not bound yet gets
+/// [`IrqError::NoController`]; probe it again later (return
+/// [`ProbeError::Defer`]).
+pub fn request(device: &Device, index: usize, handler: IrqHandler, ctx: *mut ()) -> Result<IrqHandle, IrqError> {
+    let spec = device.irq(index).map_err(|error| match error {
+        ProbeError::Defer => IrqError::NoController,
+        _ => IrqError::Unsupported,
+    })?;
+    request_irq(spec.irq, spec.trigger, spec.polarity, handler, ctx)
+}
+
+/// Like [`request`], for a line the caller already knows by number.
+pub fn request_irq(
     irq: Irq,
     trigger: Trigger,
     polarity: Polarity,

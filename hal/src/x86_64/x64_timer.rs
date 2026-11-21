@@ -159,3 +159,20 @@ pub fn event_arm(deadline_ns: u64) {
 pub fn event_disarm() {
     x64_apic::lapic_timer_stop();
 }
+
+/// The local APIC's timer as the event timer.
+pub struct LapicTimer;
+
+impl crate::driver_traits::event_timer::EventTimer for LapicTimer {
+    fn init(&self) -> Option<Irq> {
+        event_init()
+    }
+
+    fn arm(&self, deadline_ns: u64) {
+        event_arm(deadline_ns);
+    }
+
+    fn disarm(&self) {
+        event_disarm();
+    }
+}

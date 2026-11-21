@@ -1,9 +1,11 @@
 //! DesignWare 8250 UART Driver
 
-use crate::{register_driver, Serial};
+use crate::Serial;
+use crate::driver;
+use crate::driver_traits::driver::{Match, ProbeError};
+use crate::driver_traits::serial;
+use crate::services::device::Device;
 use crate::services::mmio::Mmio;
-use crate::services::sync::StaticCell;
-use crate::driver_traits::driver::{Driver, DriverProbeError};
 
 pub struct Dw8250Uart {
     base: Mmio,
@@ -41,8 +43,7 @@ impl Dw8250Uart {
         }
     }
 
-    pub unsafe fn new(base: usize, clk_frq: u32, baud_rate: u32) -> Self {
-        let registers = unsafe { Mmio::new(base) };
+    pub fn new(registers: Mmio, clk_frq: u32, baud_rate: u32) -> Self {
         let uart = Self { base: registers };
 
         // Disable Interrupts
@@ -95,19 +96,19 @@ impl Serial for Dw8250Uart {
     }
 }
 
-fn init_dw_8250_uart(resource: crate::services::device_query::DeviceResource, tree: &dyn crate::services::device_query::DeviceQuery) -> Result<&'static dyn Serial, DriverProbeError> {
-    let base = resource.mmio_base().ok_or(DriverProbeError::WrongResource)?;
-    static INSTANCE: StaticCell<Dw8250Uart> = StaticCell::uninit();
-
-    let clock_hz = tree
-        .as_dtb()
-        .and_then(|dtb| dtb.find_compatible("rockchip,serial"))
-        .and_then(|n| n.property("clock-frequency")?.as_u32())
+fn probe(dev: &'static Device) -> Result<(), ProbeError> {
+    let registers = dev.mem(0)?.mmio();
+    let clock_hz = dev
+        .fdt()
+        .and_then(|node| node.property("clock-frequency")?.as_u32())
         .unwrap_or(24_000_000);
 
-    Ok(INSTANCE.get_or_init(|| {
-        unsafe {Dw8250Uart::new(base, clock_hz, 115200)}
-    }))
+    serial::register(dev, Dw8250Uart::new(registers, clock_hz, 115200));
+    Ok(())
 }
 
-register_driver!(DW_8250_UART, "rockchip,serial", init_dw_8250_uart, Serial);
+driver! {
+    name: "dw-8250",
+    matches: [Match::Fdt("rockchip,serial")],
+    probe: probe,
+}

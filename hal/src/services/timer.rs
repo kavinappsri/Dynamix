@@ -19,7 +19,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 
 use crate::services::cpu;
-use crate::services::device_query::DeviceQuery;
+use crate::driver_traits::event_timer::primary_event_timer;
 use crate::services::interrupts::{self, Irq, IrqError, IrqStatus};
 use crate::services::sync::IrqSpinLock;
 
@@ -209,7 +209,7 @@ static READY: AtomicBool = AtomicBool::new(false);
 /// Sets up the event timer and hooks its interrupt. Needs the interrupt
 /// service ([`interrupts::init`]) to have found a controller. Interrupts must
 /// still be enabled on the CPU ([`cpu::irq_enable`]) before any timer fires.
-pub fn init(hardware: &dyn DeviceQuery) -> Result<(), TimerError> {
+pub fn init() -> Result<(), TimerError> {
     if READY.load(Ordering::Acquire) {
         return Err(TimerError::AlreadyInitialized);
     }
@@ -217,7 +217,7 @@ pub fn init(hardware: &dyn DeviceQuery) -> Result<(), TimerError> {
         return Err(TimerError::NoInterruptController);
     }
 
-    let irq = backend::init(hardware)?;
+    let irq = backend::init()?;
     // The handle is dropped on purpose: the timer interrupt is never unhooked.
     interrupts::register(irq, timer_interrupt, core::ptr::null_mut()).map_err(TimerError::Interrupt)?;
     interrupts::enable(irq).map_err(TimerError::Interrupt)?;
@@ -362,43 +362,29 @@ fn busy_wait(duration: Duration) {
 
 // -------------------------------- Hardware --------------------------------
 
-/// What the architecture provides: a one-shot event timer that raises an
-/// interrupt when the free-running clock reaches a deadline.
+/// The one-shot event timer a driver provided. Arming it before [`init`] has
+/// run is harmless: until then no timer is armed.
 mod backend {
     use super::*;
 
     /// Prepares the event timer, left disarmed, and returns its interrupt.
-    pub fn init(hardware: &dyn DeviceQuery) -> Result<Irq, TimerError> {
-        #[cfg(target_arch = "x86_64")]
-        {
-            let _ = hardware;
-            return crate::x86_64::x64_timer::event_init().ok_or(TimerError::NoEventSource);
-        }
-        #[cfg(target_arch = "aarch64")]
-        return Ok(crate::aarch64::aarch64_timer::event_init(hardware));
-        #[cfg(target_arch = "arm")]
-        return Ok(crate::armv7::armv7_timer::event_init(hardware));
+    pub fn init() -> Result<Irq, TimerError> {
+        primary_event_timer().ok_or(TimerError::NoEventSource)?.init().ok_or(TimerError::NoEventSource)
     }
 
     /// Arms the event timer for `deadline_ns` (the [`now_ns`] time base),
     /// replacing any earlier setting. A deadline in the past fires right away.
     pub fn arm(deadline_ns: u64) {
-        #[cfg(target_arch = "x86_64")]
-        crate::x86_64::x64_timer::event_arm(deadline_ns);
-        #[cfg(target_arch = "aarch64")]
-        crate::aarch64::aarch64_timer::event_arm(deadline_ns);
-        #[cfg(target_arch = "arm")]
-        crate::armv7::armv7_timer::event_arm(deadline_ns);
+        if let Some(timer) = primary_event_timer() {
+            timer.arm(deadline_ns);
+        }
     }
 
     /// Stops the event timer and clears its interrupt.
     pub fn disarm() {
-        #[cfg(target_arch = "x86_64")]
-        crate::x86_64::x64_timer::event_disarm();
-        #[cfg(target_arch = "aarch64")]
-        crate::aarch64::aarch64_timer::event_disarm();
-        #[cfg(target_arch = "arm")]
-        crate::armv7::armv7_timer::event_disarm();
+        if let Some(timer) = primary_event_timer() {
+            timer.disarm();
+        }
     }
 }
 
@@ -406,24 +392,6 @@ mod backend {
 pub fn ns_to_ticks(ns: u64, hz: u64) -> u64 {
     let ticks = (ns as u128 * hz as u128) / 1_000_000_000;
     u64::try_from(ticks).unwrap_or(u64::MAX)
-}
-
-/// The interrupt of the ARM generic timer's non-secure physical timer, from
-/// the device tree's `interrupts` property (the second of its four entries),
-/// as an id the GIC understands.
-#[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
-pub(crate) fn arm_timer_irq_from_dt(hardware: &dyn DeviceQuery) -> Option<Irq> {
-    let dtb = hardware.as_dtb()?;
-    let node = dtb.find_compatible("arm,armv8-timer").or_else(|| dtb.find_compatible("arm,armv7-timer"))?;
-    let property = node.property("interrupts")?;
-    // Each entry is three cells: type (0 = SPI, 1 = PPI), number, flags.
-    let entry = property.value().get(12..24)?;
-    let cell = |at: usize| u32::from_be_bytes([entry[at], entry[at + 1], entry[at + 2], entry[at + 3]]);
-    match cell(0) {
-        1 => Some(Irq(cell(4) + 16)),
-        0 => Some(Irq(cell(4) + 32)),
-        _ => None,
-    }
 }
 
 // -------------------------------- Clock --------------------------------

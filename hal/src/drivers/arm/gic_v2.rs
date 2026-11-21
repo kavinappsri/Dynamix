@@ -4,16 +4,14 @@
 //! self/cross-core IPIs), 16-31 PPIs (per-core: generic timer, ...), 32+ SPIs
 //! (shared peripherals, i.e. most devices).
 
-use crate::driver_traits::driver::{Driver, DriverProbeError};
+use crate::driver;
+use crate::driver_traits::driver::{Match, ProbeError};
 use crate::driver_traits::interrupt_controller::{
-    Claim, CpuId, InterruptController, Irq, IrqError, Polarity, Trigger,
+    self, Claim, CpuId, InterruptController, Irq, IrqError, IrqSpec, Polarity, Trigger,
 };
-use crate::register_driver;
-use crate::services::addr::{PhysAddr, PhysRange};
-use crate::services::device_query::{DeviceQuery, DeviceResource};
+use crate::services::device::Device;
 use crate::services::mmio::Mmio;
-use crate::services::mmu;
-use crate::services::sync::{IrqSpinLock, StaticCell};
+use crate::services::sync::IrqSpinLock;
 
 // Distributor registers
 const GICD_CTLR: usize = 0x000;
@@ -39,9 +37,6 @@ const FIRST_SPI: u32 = 32;
 /// Default priority for everything: middle of the road, below the PMR mask.
 const DEFAULT_PRIORITY: u32 = 0xA0;
 const PRIORITY_MASK: u32 = 0xF0;
-
-/// `compatible` strings of GICv2 implementations.
-const COMPATIBLES: [&str; 3] = ["arm,cortex-a15-gic", "arm,cortex-a7-gic", "arm,gic-400"];
 
 /// A GICv2: one distributor, plus a banked per-core CPU interface.
 pub struct GicV2 {
@@ -145,6 +140,33 @@ impl InterruptController for GicV2 {
         Ok(())
     }
 
+    /// `<type number flags>`: type 0 is a shared peripheral interrupt (SPI,
+    /// numbered from 32), type 1 a per-core one (PPI, from 16). The low four
+    /// bits of `flags` give the signalling; the rest (a PPI's core mask) are
+    /// not a property of the line.
+    fn translate(&self, cells: &[u32]) -> Result<IrqSpec, IrqError> {
+        let &[kind, number, flags] = cells else {
+            return Err(IrqError::Unsupported);
+        };
+        let id = match kind {
+            0 => number.checked_add(FIRST_SPI),
+            1 => number.checked_add(SGI_COUNT),
+            _ => None,
+        }
+            .ok_or(IrqError::Unsupported)?;
+        let irq = Irq(id);
+        self.check(irq)?;
+
+        let (trigger, polarity) = match flags & 0xF {
+            0b0001 => (Trigger::Edge, Polarity::ActiveHigh),
+            0b0010 => (Trigger::Edge, Polarity::ActiveLow),
+            0b0100 => (Trigger::Level, Polarity::ActiveHigh),
+            0b1000 => (Trigger::Level, Polarity::ActiveLow),
+            _ => return Err(IrqError::Unsupported),
+        };
+        Ok(IrqSpec { irq, trigger, polarity })
+    }
+
     fn set_affinity(&self, irq: Irq, cpu: CpuId) -> Result<(), IrqError> {
         let id = self.check(irq)?;
         // Only SPIs are routable; the GICv2 target list is 8 cores wide.
@@ -186,70 +208,26 @@ impl InterruptController for GicV2 {
     }
 }
 
-/// Reads cell number `index` (each `cells` 32-bit words, big endian) of a
-/// device tree property.
-fn read_cells(bytes: &[u8], index: usize, cells: usize) -> Option<u64> {
-    let start = index * cells * 4;
-    let mut value = 0u64;
-    for word in 0..cells {
-        let at = start + word * 4;
-        let raw: [u8; 4] = bytes.get(at..at + 4)?.try_into().ok()?;
-        value = value << 32 | u32::from_be_bytes(raw) as u64;
-    }
-    Some(value)
-}
-
-fn init_gic_v2(
-    resource: DeviceResource,
-    tree: &dyn DeviceQuery,
-) -> Result<&'static dyn InterruptController, DriverProbeError> {
-    static INSTANCE: StaticCell<GicV2> = StaticCell::uninit();
-
-    let distributor_base = resource.mmio_base().ok_or(DriverProbeError::WrongResource)?;
-
-    // The probe only knows the first `reg` entry (the distributor); the CPU
-    // interface is the second. The parent's #address-cells / #size-cells are
-    // not available here (2/2 on QEMU's virt even for 32-bit, 1/1 on most
-    // 32-bit SoCs), so find which one makes the first entry the distributor
-    // address the probe already resolved.
-    let dtb = tree.as_dtb().ok_or(DriverProbeError::WrongResource)?;
-    let node = COMPATIBLES
-        .iter()
-        .find_map(|compatible| dtb.find_compatible(compatible))
-        .ok_or(DriverProbeError::NoCompatibleDriver)?;
-    let reg = node.property("reg").ok_or(DriverProbeError::WrongResource)?;
-    let reg = reg.value();
-
-    let (cpu_base, cpu_size) = [2usize, 1]
-        .into_iter()
-        .find_map(|cells| {
-            // Entries are (address, size) pairs, `cells` words each.
-            if read_cells(reg, 0, cells)? != distributor_base as u64 {
-                return None;
-            }
-            Some((read_cells(reg, 2, cells)?, read_cells(reg, 3, cells)?))
-        })
-        .ok_or(DriverProbeError::WrongResource)?;
-
-    mmu::map_device(PhysRange::new(PhysAddr::new(cpu_base as usize), cpu_size as usize))
-        .map_err(|_| DriverProbeError::MappingFailed)?;
-
-    // SAFETY: both windows were mapped as device memory just above / by the probe.
-    let (distributor, cpu_interface) = unsafe { (Mmio::new(distributor_base), Mmio::new(cpu_base as usize)) };
+fn probe(dev: &'static Device) -> Result<(), ProbeError> {
+    // `reg` lists the distributor first and the CPU interface second.
+    let distributor = dev.mem(0)?.mmio();
+    let cpu_interface = dev.mem(1)?.mmio();
 
     let typer = distributor.read32(GICD_TYPER);
     let irq_count = (((typer & 0x1F) + 1) * 32).min(FIRST_SPECIAL_ID);
 
-    let gic = INSTANCE.get_or_init(|| GicV2 {
-        distributor,
-        cpu_interface,
-        irq_count,
-        rmw: IrqSpinLock::new(()),
-    });
+    let gic = GicV2 { distributor, cpu_interface, irq_count, rmw: IrqSpinLock::new(()) };
     gic.init_distributor();
-    Ok(gic)
+    interrupt_controller::register(dev, gic);
+    Ok(())
 }
 
-register_driver!(GIC_V2_CORTEX_A15, "arm,cortex-a15-gic", init_gic_v2, InterruptController);
-register_driver!(GIC_V2_CORTEX_A7, "arm,cortex-a7-gic", init_gic_v2, InterruptController);
-register_driver!(GIC_V2_GIC_400, "arm,gic-400", init_gic_v2, InterruptController);
+driver! {
+    name: "gic-v2",
+    matches: [
+        Match::Fdt("arm,cortex-a15-gic"),
+        Match::Fdt("arm,cortex-a7-gic"),
+        Match::Fdt("arm,gic-400"),
+    ],
+    probe: probe,
+}

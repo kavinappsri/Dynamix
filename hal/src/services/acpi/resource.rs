@@ -11,8 +11,6 @@ use super::namespace::Device;
 use super::raw::check;
 use super::AcpiError;
 use crate::driver_traits::interrupt_controller::{Polarity, Trigger};
-use crate::services::addr::{PhysAddr, PhysRange};
-use crate::services::device_query::DeviceResource;
 
 /// What an address-space descriptor ([`Resource::Address`]) describes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,32 +42,6 @@ pub enum Resource {
     Dma { channels: Vec<u8> },
     /// A descriptor kind this kernel does not decode (ACPICA's type number).
     Unsupported { kind: u32 },
-}
-
-impl Resource {
-    /// The register window this resource gives a driver, if it is one.
-    pub fn to_device_resource(&self) -> Option<DeviceResource> {
-        match *self {
-            Resource::Io { min, length, .. } if length > 0 => {
-                Some(DeviceResource::Io { base: min, count: u16::from(length) })
-            }
-            Resource::FixedIo { base, length } if length > 0 => {
-                Some(DeviceResource::Io { base, count: u16::from(length) })
-            }
-            Resource::Memory { min, length, .. } if length > 0 => Some(memory_window(min, length)),
-            Resource::Address { space: AddressSpace::Memory, min, length, .. } if length > 0 => {
-                Some(memory_window(min, length))
-            }
-            Resource::Address { space: AddressSpace::Io, min, length, .. } if length > 0 => {
-                Some(DeviceResource::Io { base: u16::try_from(min).ok()?, count: u16::try_from(length).ok()? })
-            }
-            _ => None,
-        }
-    }
-}
-
-fn memory_window(base: u64, length: u64) -> DeviceResource {
-    DeviceResource::Mmio { range: PhysRange::new(PhysAddr::new(base as usize), length as usize) }
 }
 
 impl Device {

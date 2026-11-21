@@ -6,3 +6,5 @@ pub mod serial;
 pub mod driver;
 pub mod power_domain;
 pub mod interrupt_controller;
+pub mod system_power;
+pub mod event_timer;

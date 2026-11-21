@@ -1,6 +1,11 @@
-//! Generic framebuffer output and device-tree driver discovery.
+//! Generic framebuffer output.
 
-use crate::define_probe;
+use alloc::boxed::Box;
+
+use crate::services::device::Device;
+use crate::services::registry::{Class, Entry, Iter};
+
+static FRAMEBUFFERS: Class<dyn Framebuffer> = Class::new();
 
 /// A pixel-addressable framebuffer.
 pub trait Framebuffer: Sync {
@@ -32,4 +37,19 @@ pub enum FramebufferError {
     DimensionsOverflow,
 }
 
-define_probe!(Framebuffer, probe_framebuffer, |_d| {});
+/// The first framebuffer that was bound, if any.
+pub fn primary_framebuffer() -> Option<&'static dyn Framebuffer> {
+    FRAMEBUFFERS.primary()
+}
+
+/// Every framebuffer that was bound, in the order they were bound.
+pub fn framebuffers() -> Iter<Entry<dyn Framebuffer>> {
+    FRAMEBUFFERS.iter()
+}
+
+/// Called by a driver's probe to hand over the framebuffer it started on `device`.
+pub fn register(device: &'static Device, framebuffer: impl Framebuffer + 'static) -> &'static dyn Framebuffer {
+    let framebuffer: &'static dyn Framebuffer = Box::leak(Box::new(framebuffer));
+    FRAMEBUFFERS.register(device, framebuffer);
+    framebuffer
+}

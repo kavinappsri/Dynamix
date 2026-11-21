@@ -34,25 +34,7 @@ SECTIONS {
     .drivers : AT(NOMINAL_LMA + (ADDR(.drivers) - _kernel_vma_start))
     {
         __start_drivers = .;
-        __start_serial_drivers = .;
-        KEEP(*(.drivers.serial))
-        __stop_serial_drivers = .;
-
-        __start_framebuffer_drivers = .;
-        KEEP(*(.drivers.framebuffer))
-        __stop_framebuffer_drivers = .;
-
-        __start_clock_drivers = .;
-        KEEP(*(.drivers.clock))
-        __stop_clock_drivers = .;
-
-        __start_power_domain_drivers = .;
-        KEEP(*(.drivers.power_domain))
-        __stop_power_domain_drivers = .;
-
-        __start_interrupt_drivers = .;
-        KEEP(*(.drivers.interrupt))
-        __stop_interrupt_drivers = .;
+        KEEP(*(.drivers))
         __stop_drivers = .;
     }
 

@@ -1,12 +1,6 @@
 //! Minimal reader for bootloader-provided Flattened Device Tree blobs.
-//!
-//! This module validates the FDT header and exposes a forward-only node
-//! iterator. It is intentionally a small early-boot parser rather than a full
-//! device-tree implementation: `reg` decoding supports common one- and
-//! two-cell address/size pairs and compatible matching is string-based.
 
 use crate::services::addr::{PhysAddr, PhysRange};
-use crate::services::device_query::{DeviceQuery, DeviceResource};
 
 const FDT_MAGIC: u32 = 0xD00DFEED;
 
@@ -43,10 +37,6 @@ impl<'a> Dtb<'a> {
     /// # Safety
     /// The caller must ensure `ptr` points to valid, accessible memory containing a DTB.
     /// Its header's total-size field must describe a readable contiguous range.
-    ///
-    /// # Errors
-    /// Returns [`DtbError::NullPointer`] for a zero pointer and
-    /// [`DtbError::InvalidMagic`] if the header does not contain an FDT magic.
     pub unsafe fn from_ptr(ptr: usize) -> Result<Self, DtbError> {
         if ptr == 0 {
             return Err(DtbError::NullPointer);
@@ -85,28 +75,91 @@ impl<'a> Dtb<'a> {
     pub fn find_node(&self, name_part: &str) -> Option<Node<'a>> {
         self.nodes().find(|&node| node.name().contains(name_part))
     }
-    
-    /// Finds the register range of the first node compatible with `compatible`
-    ///
-    /// Extension of the [`Dtb::find_compatible()`] method
-    pub fn find_compatible_range(&self, compatible: &str) -> Option<PhysRange> {
-        Dtb::find_compatible(self, compatible)
-            .and_then(|node| node.reg())
-            .map(|(base, size)| PhysRange::new(PhysAddr::new(base as usize), size as usize))
-    }
 
     /// Writes the RAM regions the tree describes into `out`; returns how many.
     pub fn memory_regions(&self, out: &mut [PhysRange]) -> usize {
-        if out.is_empty() {
-            return 0;
-        }
-
-        match self.find_node("memory").and_then(|node| node.reg()) {
-            Some((base, size)) => {
-                out[0] = PhysRange::new(PhysAddr::new(base as usize), size as usize);
-                1
+        let mut count = 0;
+        self.walk(|walked| {
+            if walked.depth() != 1 || !walked.is_enabled() {
+                return;
             }
-            None => 0,
+            let node = walked.node();
+            let is_memory = match node.property("device_type").and_then(|p| p.as_str()) {
+                Some(kind) => kind == "memory",
+                // Old trees leave `device_type` out; `memory` or `memory@<address>`.
+                None => node.name() == "memory" || node.name().starts_with("memory@"),
+            };
+            if !is_memory {
+                return;
+            }
+            walked.for_each_reg(|base, size| {
+                if size > 0 && count < out.len() {
+                    out[count] = PhysRange::new(PhysAddr::new(base as usize), size as usize);
+                    count += 1;
+                }
+            });
+        });
+        count
+    }
+
+    /// Visits every node in tree order
+    pub fn walk(&self, mut visit: impl FnMut(&WalkedNode<'_, 'a>)) {
+        let slice = self.slice;
+        let mut frames = [Frame::DEFAULT; MAX_DEPTH];
+        let mut depth = 0usize;
+        // Nodes nested deeper than `MAX_DEPTH`
+        let mut too_deep = 0usize;
+        let mut offset = self.struct_off;
+
+        while offset + 4 <= slice.len() {
+            let token = read_be_u32(slice, offset);
+            offset += 4;
+            match token {
+                FDT_BEGIN_NODE => {
+                    let mut end = offset;
+                    while end < slice.len() && slice[end] != 0 {
+                        end += 1;
+                    }
+                    let name = core::str::from_utf8(&slice[offset..end]).unwrap_or("");
+                    offset = (end + 1 + 3) & !3;
+
+                    if depth == MAX_DEPTH {
+                        too_deep += 1;
+                        continue;
+                    }
+
+                    let node = Node { dtb: *self, name: if name.is_empty() { "/" } else { name }, struct_offset: offset };
+                    let parent_enabled = depth == 0 || frames[depth - 1].enabled;
+                    frames[depth] = Frame {
+                        addr_cells: node.property("#address-cells").and_then(|p| p.as_u32()).unwrap_or(2),
+                        size_cells: node.property("#size-cells").and_then(|p| p.as_u32()).unwrap_or(1),
+                        ranges: node.property("ranges").map(|p| p.value()),
+                        enabled: parent_enabled && node.is_enabled(),
+                        interrupt_parent: node
+                            .property("interrupt-parent")
+                            .and_then(|p| p.as_u32())
+                            .or(if depth == 0 { None } else { frames[depth - 1].interrupt_parent }),
+                    };
+                    visit(&WalkedNode { node, depth, frames: &frames[..=depth] });
+                    depth += 1;
+                }
+                FDT_END_NODE => {
+                    if too_deep > 0 {
+                        too_deep -= 1;
+                    } else {
+                        depth = depth.saturating_sub(1);
+                    }
+                }
+                FDT_PROP => {
+                    if offset + 8 > slice.len() {
+                        break;
+                    }
+                    let len = read_be_u32(slice, offset) as usize;
+                    offset += 8 + ((len + 3) & !3);
+                }
+                FDT_NOP => {}
+                _ => break,
+            }
         }
     }
 
@@ -176,20 +229,34 @@ impl<'a> Node<'a> {
         self.name
     }
 
-    /// Returns whether the node's `compatible` property contains `compat_str`.
-    pub fn is_compatible(&self, compat_str: &str) -> bool {
-        if let Some(prop) = self.property("compatible") {
-            let target_bytes = compat_str.as_bytes();
-            let val_bytes = prop.value();
+    /// The tree the node belongs to.
+    pub fn dtb(&self) -> Dtb<'a> {
+        self.dtb
+    }
 
-            // Search for target byte sequence directly in the property value
-            if val_bytes.len() >= target_bytes.len() {
-                return val_bytes
-                    .windows(target_bytes.len())
-                    .any(|window| window == target_bytes);
-            }
-        }
-        false
+    /// Where the node starts in the structure block; unique per node
+    pub fn offset(&self) -> usize {
+        self.struct_offset
+    }
+
+    /// The node's `compatible` strings, most specific first
+    pub fn compatible(&self) -> impl Iterator<Item = &'a str> + use<'a> {
+        self.property("compatible")
+            .map(|prop| prop.value())
+            .unwrap_or(&[])
+            .split(|byte| *byte == 0)
+            .filter_map(|string| core::str::from_utf8(string).ok())
+            .filter(|string| !string.is_empty())
+    }
+
+    /// Returns whether the node's `compatible` property contains `compat_str`
+    pub fn is_compatible(&self, compat_str: &str) -> bool {
+        self.compatible().any(|candidate| candidate == compat_str)
+    }
+
+    /// Whether `status` allows the node to be used
+    pub fn is_enabled(&self) -> bool {
+        matches!(self.property("status").and_then(|prop| prop.as_str()), None | Some("okay") | Some("ok"))
     }
 
     /// Looks up a property by its exact name on this node.
@@ -235,34 +302,6 @@ impl<'a> Node<'a> {
         }
 
         None
-    }
-
-    /// Parses the `reg` property as `(physical_base, size)`.
-    /// Supports standard 64-bit addresses (`#address-cells = <2>`, `#size-cells = <2>`).
-    pub fn reg(&self) -> Option<(u64, u64)> {
-        let prop = self.property("reg")?;
-        let val = prop.value();
-
-        if val.len() >= 16 {
-            // 64-bit address + 64-bit size
-            let addr_hi = read_be_u32(val, 0) as u64;
-            let addr_lo = read_be_u32(val, 4) as u64;
-            let size_hi = read_be_u32(val, 8) as u64;
-            let size_lo = read_be_u32(val, 12) as u64;
-
-            let address = (addr_hi << 32) | addr_lo;
-            let size = (size_hi << 32) | size_lo;
-
-            Some((address, size))
-        } else if val.len() >= 8 {
-            // 32-bit address + 32-bit size
-            let address = read_be_u32(val, 0) as u64;
-            let size = read_be_u32(val, 4) as u64;
-
-            Some((address, size))
-        } else {
-            None
-        }
     }
 
     /// Returns the node's phandle, if it has one
@@ -412,12 +451,137 @@ fn read_be_u32(slice: &[u8], offset: usize) -> u32 {
     u32::from_be_bytes(bytes)
 }
 
-impl<'a> DeviceQuery for Dtb<'a> {
-    fn find_compatible_resource(&self, compatible: &str) -> Option<DeviceResource> {
-        self.find_compatible_range(compatible).map(|range| DeviceResource::Mmio { range })
+/// Most nested levels [`Dtb::walk`] follows
+const MAX_DEPTH: usize = 24;
+
+/// What a node says about the space its children live in
+#[derive(Clone, Copy)]
+struct Frame<'a> {
+    /// `#address-cells` (2 if the node does not say)
+    addr_cells: u32,
+    /// `#size-cells` (1 if the node does not say)
+    size_cells: u32,
+    /// `ranges`: `None` if absent, which means the children's addresses are
+    /// not CPU addresses (an I2C bus, say); empty means they are the same
+    ranges: Option<&'a [u8]>,
+    /// This node and every node above it are enabled
+    enabled: bool,
+    /// The phandle in effect as `interrupt-parent`: the node's own, else the
+    /// nearest ancestor's
+    interrupt_parent: Option<u32>,
+}
+
+impl Frame<'_> {
+    const DEFAULT: Frame<'static> = Frame { addr_cells: 2, size_cells: 1, ranges: None, enabled: true, interrupt_parent: None };
+}
+
+/// A node handed out by [`Dtb::walk`].
+pub struct WalkedNode<'w, 'a> {
+    node: Node<'a>,
+    depth: usize,
+    /// The frames of the node and all its ancestors, the root first.
+    frames: &'w [Frame<'a>],
+}
+
+impl<'a> WalkedNode<'_, 'a> {
+    pub fn node(&self) -> Node<'a> {
+        self.node
     }
 
-    fn as_dtb(&self) -> Option<&Dtb<'_>> {
-        Some(self)
+    /// How many ancestors the node has (the root has none).
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
+
+    /// Whether the node, and everything above it, has an enabled `status`.
+    pub fn is_enabled(&self) -> bool {
+        self.frames[self.depth].enabled
+    }
+
+    /// The phandle of the node's interrupt controller, if the node or an
+    /// ancestor names one with `interrupt-parent`.
+    pub fn interrupt_parent(&self) -> Option<u32> {
+        self.frames[self.depth].interrupt_parent
+    }
+
+    /// Calls `f(address, size)` for each `reg` entry, with `address` as the CPU
+    /// sees it (translated through the `ranges` of every bus above).
+    pub fn for_each_reg(&self, mut f: impl FnMut(u64, u64)) -> bool {
+        let Some(parent) = self.depth.checked_sub(1).map(|parent| &self.frames[parent]) else {
+            return false;
+        };
+        let Some(reg) = self.node.property("reg") else {
+            return true;
+        };
+        let (addr_cells, size_cells) = (parent.addr_cells as usize, parent.size_cells as usize);
+        if addr_cells == 0 || addr_cells > 2 || size_cells > 2 {
+            return false;
+        }
+        if self.frames[1..self.depth].iter().any(|bus| bus.ranges.is_none()) {
+            return false;
+        }
+
+        let value = reg.value();
+        let words = addr_cells + size_cells;
+        let mut entry = 0;
+        while (entry + 1) * words * 4 <= value.len() {
+            let address = cells_at(value, entry * words, addr_cells);
+            let size = cells_at(value, entry * words + addr_cells, size_cells);
+            let (Some(address), Some(size)) = (address, size) else { return false };
+            match self.translate(address, size) {
+                Some(address) => f(address, size),
+                None => return false,
+            }
+            entry += 1;
+        }
+        true
+    }
+
+    /// Carries a bus address up through every `ranges` to a CPU address.
+    fn translate(&self, mut address: u64, size: u64) -> Option<u64> {
+        for level in (1..self.depth).rev() {
+            let bus = &self.frames[level];
+            let ranges = bus.ranges?;
+            if ranges.is_empty() {
+                continue;
+            }
+            let child_cells = bus.addr_cells as usize;
+            let parent_cells = self.frames[level - 1].addr_cells as usize;
+            let size_cells = bus.size_cells as usize;
+            if child_cells > 2 || parent_cells > 2 || size_cells > 2 {
+                return None;
+            }
+
+            let words = child_cells + parent_cells + size_cells;
+            let mut mapped = None;
+            let mut entry = 0;
+            while words > 0 && (entry + 1) * words * 4 <= ranges.len() {
+                let at = entry * words;
+                let child = cells_at(ranges, at, child_cells)?;
+                let parent = cells_at(ranges, at + child_cells, parent_cells)?;
+                let length = cells_at(ranges, at + child_cells + parent_cells, size_cells)?;
+                if address >= child && address - child < length && size <= length - (address - child) {
+                    mapped = Some(address - child + parent);
+                    break;
+                }
+                entry += 1;
+            }
+            address = mapped?;
+        }
+        Some(address)
+    }
+}
+
+fn cells_at(bytes: &[u8], word: usize, cells: usize) -> Option<u64> {
+    let read = |index: usize| -> Option<u64> {
+        let at = index.checked_mul(4)?;
+        let raw = bytes.get(at..at + 4)?;
+        Some(u64::from(u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]])))
+    };
+    match cells {
+        0 => Some(0),
+        1 => read(word),
+        2 => Some((read(word)? << 32) | read(word + 1)?),
+        _ => None,
     }
 }

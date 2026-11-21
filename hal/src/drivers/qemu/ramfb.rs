@@ -1,14 +1,16 @@
 //! QEMU RAM framebuffer driver.
 
-use crate::services::mmu::va_to_pa;
-use core::{cell::UnsafeCell, mem::size_of};
+use core::mem::size_of;
 
 use crate::driver_traits::framebuffer::FramebufferError::{DestinationOutOfBounds, DimensionsOverflow, SourceTooSmall};
 use crate::drivers::qemu::fw_cfg::FwCfg;
-use crate::services::sync::StaticCell;
-use crate::{register_driver, Framebuffer, FramebufferError};
-use crate::driver_traits::driver::{Driver, DriverProbeError};
-use crate::services::device_query::DeviceQuery;
+use crate::driver;
+use crate::driver_traits::driver::{Match, ProbeError};
+use crate::driver_traits::framebuffer;
+use crate::services::device::Device;
+use crate::services::mmio::Mmio;
+use crate::services::pmm;
+use crate::{Framebuffer, FramebufferError};
 
 const RAMFB_FILE: &str = "etc/ramfb";
 const XRGB8888: u32 = 0x3432_5258;
@@ -30,44 +32,49 @@ struct RamFbConfig {
 
 const _: () = assert!(size_of::<RamFbConfig>() == 28);
 
-#[repr(align(16))]
-struct DisplayMemory(UnsafeCell<[u32; PIXEL_COUNT]>);
-
-// RAMFB is the only writer to this memory after initialization. Early boot is
-// single-core; future multi core display support must add external locking.
-unsafe impl Sync for DisplayMemory {}
-
-static DISPLAY_MEMORY: DisplayMemory = DisplayMemory(UnsafeCell::new([0; PIXEL_COUNT]));
+/// Frames the pixel buffer takes, as a buddy-allocator order.
+const FRAMEBUFFER_ORDER: usize = (PIXEL_COUNT * size_of::<u32>())
+    .div_ceil(pmm::FRAME_SIZE)
+    .next_power_of_two()
+    .trailing_zeros() as usize;
 
 /// QEMU RAM framebuffer implementation hidden behind [`Framebuffer`].
 struct RamFb {
     pixels: *mut u32,
 }
 
-// Pixel writes use volatile stores through a shared framebuffer reference. The
-// driver is selected once during single-core early boot.
+// Pixel writes use volatile stores through a shared framebuffer reference; the
+// buffer belongs to this instance for the rest of the boot.
 unsafe impl Sync for RamFb {}
 
 impl RamFb {
-    fn configure(fw_cfg_base: usize) -> Result<Self, DriverProbeError> {
-        // SAFETY: this address came from the validated, identity-mapped DTB.
-        let fw_cfg = unsafe { FwCfg::new(fw_cfg_base) };
+    fn configure(registers: Mmio) -> Result<Self, ProbeError> {
+        let fw_cfg = FwCfg::new(registers);
         let selector = fw_cfg
             .find_file(RAMFB_FILE)
-            .map_err(|_| DriverProbeError::InitFailed)?
-            .ok_or(DriverProbeError::InitFailed)?;
-        let pixels = DISPLAY_MEMORY.0.get().cast::<u32>();
+            .map_err(|_| ProbeError::InitFailed)?
+            // A fw_cfg without a ramfb file is a machine with no such display.
+            .ok_or(ProbeError::NotPresent)?;
+
+        let frame = pmm::alloc_frames(FRAMEBUFFER_ORDER).map_err(|_| ProbeError::MappingFailed)?;
+        // RAM from the physical allocator is identity mapped.
+        let address = frame.addr().as_usize();
+        let pixels = address as *mut u32;
+        // SAFETY: the block is ours, mapped, and `PIXEL_COUNT` pixels fit in it.
+        unsafe { core::ptr::write_bytes(pixels, 0, PIXEL_COUNT) };
+
         let config = RamFbConfig {
-            address: (va_to_pa(pixels as usize) as u64).to_be(),
+            address: (address as u64).to_be(),
             fourcc: XRGB8888.to_be(),
             flags: 0,
             width: (WIDTH as u32).to_be(),
             height: (HEIGHT as u32).to_be(),
             stride: ((WIDTH * size_of::<u32>()) as u32).to_be(),
         };
-        fw_cfg
-            .write_object(selector, &config)
-            .map_err(|_| DriverProbeError::InitFailed)?;
+        if fw_cfg.write_object(selector, &config).is_err() {
+            let _ = pmm::free_frames(frame, FRAMEBUFFER_ORDER);
+            return Err(ProbeError::InitFailed);
+        }
 
         Ok(Self { pixels })
     }
@@ -123,12 +130,15 @@ impl Framebuffer for RamFb {
     }
 }
 
-fn init_ramfb(resource: crate::services::device_query::DeviceResource, _tree: &dyn DeviceQuery) -> Result<&'static dyn Framebuffer, DriverProbeError> {
-    let fw_cfg_base = resource.mmio_base().ok_or(DriverProbeError::WrongResource)?;
-    static INSTANCE: StaticCell<RamFb> = StaticCell::uninit();
-    let ramfb = RamFb::configure(fw_cfg_base)?;
-    let ramfb: &'static RamFb = INSTANCE.get_or_init(|| ramfb);
-    Ok(ramfb)
+fn probe(dev: &'static Device) -> Result<(), ProbeError> {
+    let registers = dev.mem(0)?.mmio();
+    framebuffer::register(dev, RamFb::configure(registers)?);
+    Ok(())
 }
-register_driver!(QEMU_RAMFB, "qemu,fw-cfg-mmio", init_ramfb, Framebuffer);
+
+driver! {
+    name: "ramfb",
+    matches: [Match::Fdt("qemu,fw-cfg-mmio")],
+    probe: probe,
+}
 

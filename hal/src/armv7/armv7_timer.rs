@@ -2,13 +2,14 @@
 
 use core::arch::asm;
 
-use crate::services::device_query::DeviceQuery;
 use crate::services::interrupts::Irq;
 use crate::services::timer::ns_to_ticks;
 
 /// The non-secure physical timer's PPI on every board seen so far, used when
 /// the device tree does not say.
-const FALLBACK_TIMER_IRQ: Irq = Irq(30);
+/// The non-secure physical timer's PPI, 30 on every GIC platform we know,
+/// used if the device tree does not say.
+pub const FALLBACK_TIMER_IRQ: Irq = Irq(30);
 
 /// CNTP_CTL: timer enabled, interrupt not masked.
 const CTL_ENABLE: u32 = 1;
@@ -91,10 +92,9 @@ fn set_cntp_ctl(value: u32) {
     }
 }
 
-/// Leaves the event timer (the physical timer) disarmed and returns its interrupt.
-pub fn event_init(hardware: &dyn DeviceQuery) -> Irq {
+/// Leaves the event timer (the physical timer) disarmed.
+pub fn event_init() {
     set_cntp_ctl(0);
-    crate::services::timer::arm_timer_irq_from_dt(hardware).unwrap_or(FALLBACK_TIMER_IRQ)
 }
 
 /// Fires the timer interrupt when `now_ns()` reaches `deadline_ns`.

@@ -99,9 +99,7 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
 
     hal::services::mmu::init().expect("MMU init failed");
 
-    // Serial as early as the hardware description can name it.
     let hardware = boot_info.hardware.as_ref();
-    let mut serial = hardware.and_then(|hardware| hal::probe_serial(hardware).ok());
 
     // Map an output device first, framebuffer in this case
     let mut framebuffer = None;
@@ -129,15 +127,34 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
     }
 
     hal::services::pmm::init(boot_info.memory_regions.as_slice(), &reserved[..reserved_count]).expect("Physical memory manager init failed");
-    
+
     let hardware_init = hardware.map(|hardware| hardware.init());
-    if serial.is_none() {
-        serial = hardware.and_then(|hardware| hal::probe_serial(hardware).ok());
-    }
+
+    // Every device the firmware describes gets its driver here: serial ports,
+    // the interrupt controller, clocks, power domains and displays alike. The
+    // call is the same on every architecture.
+    let device_report = match (hardware, &hardware_init) {
+        (Some(hardware), Some(Ok(()))) => Some(hal::services::device::init(hardware)),
+        _ => None,
+    };
+
+    // The console is the first serial port that was bound.
+    let serial = hal::active_serial();
+
     if let (Some(uart), Some(hardware), Some(init)) = (serial, hardware, &hardware_init) {
         let _ = match init {
             Ok(()) => writeln!(SerialWriter(uart), "[+] Hardware description ready: {}", hardware),
             Err(err) => writeln!(SerialWriter(uart), "[!] Hardware description failed: {}", err),
+        };
+    }
+    if let (Some(uart), Some(report)) = (serial, &device_report) {
+        let _ = match report {
+            Ok(report) => writeln!(
+                SerialWriter(uart),
+                "[+] Devices: {} found, {} bound, {} failed",
+                report.devices, report.bound, report.failed
+            ),
+            Err(err) => writeln!(SerialWriter(uart), "[!] Device discovery failed: {}", err),
         };
     }
 
@@ -153,37 +170,30 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
         report_selftest(serial, "Timer", time_test::run());
     }
 
-    // Interrupt controller
-    if let Some(hardware) = hardware {
-        match hal::services::interrupts::init(hardware) {
-            Ok(()) => {
-                if DEV_IRQ_SELFTEST {
-                    let outcome = irq_test::run();
-                    if let Some(uart) = serial {
-                        match outcome {
-                            Ok(()) => { let _ = writeln!(SerialWriter(uart), "[+] Interrupt self-test passed"); }
-                            Err(why) => { let _ = writeln!(SerialWriter(uart), "[!] Interrupt self-test FAILED: {}", why); }
-                        }
+    // Interrupt controller, bound with the rest of the devices above
+    match hal::services::interrupts::init() {
+        Ok(()) => {
+            if DEV_IRQ_SELFTEST {
+                let outcome = irq_test::run();
+                if let Some(uart) = serial {
+                    match outcome {
+                        Ok(()) => { let _ = writeln!(SerialWriter(uart), "[+] Interrupt self-test passed"); }
+                        Err(why) => { let _ = writeln!(SerialWriter(uart), "[!] Interrupt self-test FAILED: {}", why); }
                     }
                 }
             }
-            Err(err) => {
-                if let Some(uart) = serial {
-                    let _ = writeln!(SerialWriter(uart), "[!] No interrupt controller: {:?}", err);
-                }
+        }
+        Err(err) => {
+            if let Some(uart) = serial {
+                let _ = writeln!(SerialWriter(uart), "[!] No interrupt controller: {:?}", err);
             }
         }
-    } else {
-        if let Some(uart) = serial {
-            let _ = writeln!(SerialWriter(uart), "[!] boot_info.hardware is None");
-        }
     }
-
 
     if DEV_WORK_SELFTEST {
         report_selftest(serial, "Work queue", work_test::run());
     }
-    
+
     if let Some(hardware) = hardware {
         if let (Some(uart), Err(err)) = (serial, hardware.enable()) {
             let _ = writeln!(SerialWriter(uart), "[!] Hardware description enable failed: {}", err);
@@ -192,28 +202,17 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
 
     // The interrupt-driven timers
     if hal::services::interrupts::is_ready() {
-        if let Some(hardware) = hardware {
-            let timer_ready = hal::services::timer::init(hardware);
-            if let Some(uart) = serial {
-                let _ = match &timer_ready {
-                    Ok(()) => writeln!(SerialWriter(uart), "[+] Interrupt timer ready"),
-                    Err(err) => writeln!(SerialWriter(uart), "[!] Interrupt timer unavailable: {:?}", err),
-                };
-            }
+        let timer_ready = hal::services::timer::init();
+        if let Some(uart) = serial {
+            let _ = match &timer_ready {
+                Ok(()) => writeln!(SerialWriter(uart), "[+] Interrupt timer ready"),
+                Err(err) => writeln!(SerialWriter(uart), "[!] Interrupt timer unavailable: {:?}", err),
+            };
         }
         cpu::irq_enable();
     }
 
-    // SoC support drivers the display may depend on; a miss is fine.
-    if let Some(hardware) = hardware {
-        let _ = hal::driver_traits::power_domain::probe_power_domains(hardware);
-        let _ = hal::driver_traits::clocks::probe_clocks(hardware);
-    }
-
-    let power_ok = match hardware {
-        Some(hardware) => hal::services::power::init(hardware).is_ok(),
-        None => false,
-    };
+    let power_ok = hal::services::power::is_available();
 
     if let Some(fb) = framebuffer {
         let status = BootStatus {
@@ -226,8 +225,7 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
     }
 
     // Real display driver if the platform has one
-    let display: Option<&'static dyn Framebuffer> = hardware
-        .and_then(|hardware| hal::driver_traits::framebuffer::probe_framebuffer(hardware).ok())
+    let display: Option<&'static dyn Framebuffer> = hal::driver_traits::framebuffer::primary_framebuffer()
         .or_else(|| hal::services::exceptions::fault_framebuffer().map(|fb| fb as &'static dyn Framebuffer));
 
     if let (Some(uart), Some(display)) = (serial, display) {

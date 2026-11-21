@@ -1,54 +1,44 @@
-//! Provides power related functions for armv7 systems
+//! PSCI calls for armv7.
 
 use core::arch::asm;
-use core::sync::atomic::{AtomicU8, Ordering};
 
 use crate::services::power::PowerError;
 
+/// The conduit PSCI calls travel over, as the device tree's `method` names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PsciMethod {
-    Hvc = 0,
-    Smc = 1,
-    Uninitialized = 2,
+    Hvc,
+    Smc,
 }
 
-static PSCI_METHOD: AtomicU8 = AtomicU8::new(PsciMethod::Uninitialized as u8);
-
-pub fn init(method: &str) -> Result<(), PowerError> {
-    let value = if method == "hvc" {
-        PsciMethod::Hvc as u8
-    } else if method == "smc" {
-        PsciMethod::Smc as u8
-    } else {
-        return Err(PowerError::BadHardwareDescription);
-    };
-
-    PSCI_METHOD.store(value, Ordering::Release);
-    Ok(())
-}
-
-pub fn system_off() -> Result<(), PowerError> {
-    match PSCI_METHOD.load(Ordering::Acquire) {
-        0 => {
-            unsafe {
-                asm!(
-                ".arch_extension virt",
-                "hvc #0",
-                in("r0") 0x8400_0008u32,
-                options(nostack, nomem)
-                );
-            }
+impl PsciMethod {
+    pub fn from_property(method: &str) -> Option<Self> {
+        match method {
+            "hvc" => Some(PsciMethod::Hvc),
+            "smc" => Some(PsciMethod::Smc),
+            _ => None,
         }
-        1 => {
-            unsafe {
-                asm!(
-                ".arch_extension sec",
-                "smc #0",
-                in("r0") 0x8400_0008u32,
-                options(nostack, nomem)
-                );
-            }
-        }
-        _ => return Err(PowerError::NotInitialized),
     }
-    Ok(())
+}
+
+/// PSCI `SYSTEM_OFF`. Returns only if the call did not take effect.
+pub fn system_off(method: PsciMethod) -> Result<(), PowerError> {
+    // SAFETY: a PSCI call with function id SYSTEM_OFF, which takes no arguments.
+    unsafe {
+        match method {
+            PsciMethod::Hvc => asm!(
+            ".arch_extension virt",
+            "hvc #0",
+            in("r0") 0x8400_0008u32,
+            options(nostack, nomem)
+            ),
+            PsciMethod::Smc => asm!(
+            ".arch_extension sec",
+            "smc #0",
+            in("r0") 0x8400_0008u32,
+            options(nostack, nomem)
+            ),
+        }
+    }
+    Err(PowerError::Failed)
 }

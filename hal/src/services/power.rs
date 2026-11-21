@@ -1,54 +1,27 @@
-//! Provides Power related functions
+//! Powering the machine off.
+//!
+//! What can do it is a driver: PSCI on ARM, ACPI sleep state S5 on x86. This
+//! is the kernel's way to ask the one that bound.
 
-use crate::services::boot_info::HardwareDescription;
+use crate::driver_traits::system_power::primary_system_power;
 
-/// Why the power system could not be set up.
+/// Why a power request failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PowerError {
-    /// The platform description (device tree / ACPI tables) has no usable power interface.
-    NotDescribed,
-    /// The description exists but names something this kernel cannot drive.
+    /// The controller does not support the request.
     Unsupported,
-    /// The platform description is present but malformed.
-    BadHardwareDescription,
-    /// Power control was used before `init` succeeded.
-    NotInitialized,
+    /// The request was made and did not take effect.
+    Failed,
 }
 
-/// Sets up the power system from the platform description:
-/// PSCI node on aarch64/armv7, FADT + DSDT `\_S5` on x86_64.
-pub fn init(tree: &HardwareDescription<'_>) -> Result<(), PowerError> {
-    #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]
-    {
-        use crate::services::device_query::DeviceQuery;
-
-        let dtb = tree.as_dtb().ok_or(PowerError::NotDescribed)?;
-        let psci = dtb.find_compatible("arm,psci").ok_or(PowerError::NotDescribed)?;
-        let method = psci.property("method").and_then(|p| p.as_str()).ok_or(PowerError::Unsupported)?;
-
-        #[cfg(target_arch = "aarch64")]
-        { crate::aarch64::aarch64_power::init(method) }
-        #[cfg(target_arch = "arm")]
-        { crate::armv7::armv7_power::init(method) }
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    {
-        use crate::services::device_query::DeviceQuery;
-
-        let acpi = tree.as_acpi().ok_or(PowerError::NotDescribed)?;
-        crate::x86_64::x64_power::init(acpi)
-    }
+/// Whether anything that can turn the machine off was found.
+pub fn is_available() -> bool {
+    primary_system_power().is_some()
 }
 
-/// Turns off the system. Returns if power-off is unavailable.
+/// Turns off the system. Returns if power-off is unavailable or failed.
 pub fn system_off() {
-    #[cfg(target_arch = "aarch64")]
-    let _ = crate::aarch64::aarch64_power::system_off();
-
-    #[cfg(target_arch = "arm")]
-    let _ = crate::armv7::armv7_power::system_off();
-
-    #[cfg(target_arch = "x86_64")]
-    crate::x86_64::x64_power::system_off();
+    if let Some(power) = primary_system_power() {
+        let _ = power.power_off();
+    }
 }

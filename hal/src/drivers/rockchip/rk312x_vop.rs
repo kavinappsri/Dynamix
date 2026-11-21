@@ -9,14 +9,14 @@
 
 
 use crate::driver_traits::clocks::ClockController;
-use crate::driver_traits::driver::DriverProbeError;
+use crate::driver;
+use crate::driver_traits::clocks;
+use crate::driver_traits::driver::{Match, ProbeError};
+use crate::driver_traits::framebuffer;
+use crate::services::device::Device;
 use crate::driver_traits::framebuffer::{FramebufferError, Framebuffer};
 use crate::services::mmio::Mmio;
 use crate::drivers::rockchip::rk312x_cru::Rk3126Clock;
-use crate::register_driver;
-use crate::services::sync::StaticCell;
-use crate::driver_traits::driver::Driver;
-use crate::services::device_query::DeviceQuery;
 use crate::services::addr::PhysRange;
 use crate::services::pmm;
 use crate::services::mmu;
@@ -144,34 +144,30 @@ impl Rk312xVop {
     }
 
     /// Un-gates and rate-sets every clock the VOP output path needs
-    fn bring_up_clocks(clocks: &dyn ClockController, mode: &Mode) -> Result<(), DriverProbeError> {
+    fn bring_up_clocks(clocks: &dyn ClockController, mode: &Mode) -> Result<(), ProbeError> {
         clocks
             .enable(Rk3126Clock::AclkLcdc0 as u32)
-            .map_err(|_| DriverProbeError::InitFailed)?;
+            .map_err(|_| ProbeError::InitFailed)?;
         clocks
             .enable(Rk3126Clock::HclkLcdc0 as u32)
-            .map_err(|_| DriverProbeError::InitFailed)?;
+            .map_err(|_| ProbeError::InitFailed)?;
 
         // The divider must be programmed before the pixel clock is ungated
         clocks
             .set_rate(Rk3126Clock::DclkVop as u32, mode.pixel_clock_hz)
-            .map_err(|_| DriverProbeError::InitFailed)?;
+            .map_err(|_| ProbeError::InitFailed)?;
         clocks
             .enable(Rk3126Clock::DclkVop as u32)
-            .map_err(|_| DriverProbeError::InitFailed)?;
+            .map_err(|_| ProbeError::InitFailed)?;
 
         Ok(())
     }
 
-    fn configure(vop_base: usize, clocks: &dyn ClockController) -> Result<Self, DriverProbeError> {
+    fn configure(regs: Mmio, clocks: &dyn ClockController) -> Result<Self, ProbeError> {
         let mode = DEFAULT_MODE;
         Self::bring_up_clocks(clocks, &mode)?;
 
-        // SAFETY: `vop_base` came from the validated, mapped device tree
-        // via `probe_framebuffer`.
-        let regs = unsafe { Mmio::new(vop_base) };
-
-        let frame = pmm::alloc_frames(FRAMEBUFFER_ORDER).map_err(|_| DriverProbeError::MappingFailed)?;
+        let frame = pmm::alloc_frames(FRAMEBUFFER_ORDER).map_err(|_| ProbeError::MappingFailed)?;
 
         let framebuffer_pa = frame.addr().as_usize();
         let buffer = PhysRange::new(frame.addr(), pmm::FRAME_SIZE << FRAMEBUFFER_ORDER);
@@ -179,7 +175,7 @@ impl Rk312xVop {
         if mmu::remap_normal_nc(buffer).is_err() {
             // remap failed
             let _ = pmm::free_frames(frame, FRAMEBUFFER_ORDER);
-            return Err(DriverProbeError::MappingFailed);
+            return Err(ProbeError::MappingFailed);
         }
 
         let pixels = framebuffer_pa as *mut u32;
@@ -333,13 +329,17 @@ impl Framebuffer for Rk312xVop {
     }
 }
 
-fn init_rk312x_vop(resource: crate::services::device_query::DeviceResource, _tree: &dyn DeviceQuery) -> Result<&'static dyn Framebuffer, DriverProbeError> {
-    let vop_base = resource.mmio_base().ok_or(DriverProbeError::WrongResource)?;
-    static INSTANCE: StaticCell<Rk312xVop> = StaticCell::uninit();
-    let clocks = crate::driver_traits::clocks::active_clock().ok_or(DriverProbeError::InitFailed)?;
+fn probe(dev: &'static Device) -> Result<(), ProbeError> {
+    let regs = dev.mem(0)?.mmio();
+    // The pixel clock comes from the CRU, which may not have been probed yet.
+    let clocks = clocks::active_clock().ok_or(ProbeError::Defer)?;
 
-    let vop = Rk312xVop::configure(vop_base, clocks)?;
-    let vop: &'static Rk312xVop = INSTANCE.get_or_init(|| vop);
-    Ok(vop)
+    framebuffer::register(dev, Rk312xVop::configure(regs, clocks)?);
+    Ok(())
 }
-register_driver!(RK312X_VOP, "rockchip,rk312x-lcdc", init_rk312x_vop, Framebuffer);
+
+driver! {
+    name: "rk312x-vop",
+    matches: [Match::Fdt("rockchip,rk312x-lcdc")],
+    probe: probe,
+}

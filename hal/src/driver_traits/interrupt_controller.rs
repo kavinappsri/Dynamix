@@ -1,9 +1,16 @@
 //! Interrupt Controller interface
 
-use crate::define_probe;
+use alloc::boxed::Box;
+
+use crate::services::device::Device;
+use crate::services::registry::{Class, Entry, Iter};
 use crate::services::sync::StaticCell;
 
+/// The controller the interrupt service chose to use.
 static ACTIVE_INTERRUPT_CONTROLLER: StaticCell<&'static dyn InterruptController> = StaticCell::uninit();
+
+/// Every interrupt controller that was bound.
+static CONTROLLERS: Class<dyn InterruptController> = Class::new();
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Irq(pub u32);
@@ -33,6 +40,14 @@ pub enum Trigger {
 pub enum Polarity {
     ActiveHigh,
     ActiveLow,
+}
+
+/// An interrupt line of a device, with how it is signalled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IrqSpec {
+    pub irq: Irq,
+    pub trigger: Trigger,
+    pub polarity: Polarity,
 }
 
 /// An interrupt the controller has handed to the CPU, to be given back to
@@ -84,6 +99,15 @@ pub trait InterruptController: Sync {
     /// Sets how `irq` is signalled. Call before enabling it.
     fn configure(&self, irq: Irq, trigger: Trigger, polarity: Polarity) -> Result<(), IrqError>;
 
+    /// Decodes one interrupt specifier as a device tree writes it (the cells
+    /// of one `interrupts` entry, whose length is this controller's
+    /// `#interrupt-cells`). Only the controller knows the format, which is why
+    /// this is its job. Controllers that no device tree device can name
+    /// (the x86 APIC) leave it unsupported.
+    fn translate(&self, _cells: &[u32]) -> Result<IrqSpec, IrqError> {
+        Err(IrqError::Unsupported)
+    }
+
     /// Routes `irq` to `cpu`. Controllers that cannot route return
     /// [`IrqError::Unsupported`].
     fn set_affinity(&self, _irq: Irq, _cpu: CpuId) -> Result<(), IrqError> {
@@ -121,4 +145,28 @@ pub(crate) fn set_active_interrupt_controller(controller: &'static dyn Interrupt
     ACTIVE_INTERRUPT_CONTROLLER.get_or_init(|| controller);
 }
 
-define_probe!(InterruptController, probe_interrupt_controller, |driver| { set_active_interrupt_controller(driver) });
+/// Every interrupt controller that was bound, in the order they were bound.
+pub fn interrupt_controllers() -> Iter<Entry<dyn InterruptController>> {
+    CONTROLLERS.iter()
+}
+
+/// The first interrupt controller that was bound, if any.
+pub fn primary_interrupt_controller() -> Option<&'static dyn InterruptController> {
+    CONTROLLERS.primary()
+}
+
+/// Called by a driver's probe to hand over the controller it started on `device`.
+pub fn register(
+    device: &'static Device,
+    controller: impl InterruptController + 'static,
+) -> &'static dyn InterruptController {
+    let controller: &'static dyn InterruptController = Box::leak(Box::new(controller));
+    CONTROLLERS.register(device, controller);
+    controller
+}
+
+/// Like [`register`], for a controller that already lives in a static because
+/// architecture code reaches it directly too (the x86 APIC).
+pub fn register_static(device: &'static Device, controller: &'static dyn InterruptController) {
+    CONTROLLERS.register(device, controller);
+}

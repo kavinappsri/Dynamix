@@ -5,7 +5,6 @@
 
 use crate::services::acpi::{AcpiRoot, AcpiError};
 use crate::services::addr::PhysRange;
-use crate::services::device_query::{DeviceQuery, DeviceResource};
 use crate::services::dtb::Dtb;
 use crate::services::framebuffer::FirmwareFramebuffer;
 
@@ -94,29 +93,6 @@ impl core::fmt::Display for HardwareDescription<'_> {
         match self {
             HardwareDescription::Fdt(_) => write!(f, "FDT"),
             HardwareDescription::Acpi(acpi) => write!(f, "{acpi}"),
-        }
-    }
-}
-
-impl<'a> DeviceQuery for HardwareDescription<'a> {
-    fn find_compatible_resource(&self, compatible: &str) -> Option<DeviceResource> {
-        match self {
-            HardwareDescription::Fdt(dtb) => dtb.find_compatible_resource(compatible),
-            HardwareDescription::Acpi(acpi) => acpi.find_compatible_resource(compatible),
-        }
-    }
-
-    fn as_dtb(&self) -> Option<&Dtb<'_>> {
-        match self {
-            HardwareDescription::Fdt(dtb) => Some(dtb),
-            HardwareDescription::Acpi(_) => None,
-        }
-    }
-
-    fn as_acpi(&self) -> Option<&AcpiRoot> {
-        match self {
-            HardwareDescription::Fdt(_) => None,
-            HardwareDescription::Acpi(acpi) => Some(acpi),
         }
     }
 }

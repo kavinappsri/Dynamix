@@ -3,10 +3,12 @@
 //! This trait is for internal power supply. the external power
 //! should be handled by another trait, which communicates to the PMIC
 
-use crate::define_probe;
-use crate::services::sync::StaticCell;
+use alloc::boxed::Box;
 
-static ACTIVE_POWER_DOMAIN_CONTROLLER: StaticCell<&'static dyn PowerDomainController> = StaticCell::uninit();
+use crate::services::device::Device;
+use crate::services::registry::{Class, Entry, Iter};
+
+static POWER_DOMAINS: Class<dyn PowerDomainController> = Class::new();
 
 /// Power domain errors
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -28,8 +30,22 @@ pub trait PowerDomainController: Sync {
     fn is_powered_on(&self, domain: u32) -> Result<bool, PowerDomainError>;
 }
 
+/// The first power domain controller that was bound, if any.
 pub fn active_power_domain_controller() -> Option<&'static dyn PowerDomainController> {
-    ACTIVE_POWER_DOMAIN_CONTROLLER.get().copied()
+    POWER_DOMAINS.primary()
 }
 
-define_probe!(PowerDomainController, probe_power_domains, |driver| { ACTIVE_POWER_DOMAIN_CONTROLLER.get_or_init(|| driver) } );
+/// Every power domain controller that was bound, in the order they were bound.
+pub fn power_domain_controllers() -> Iter<Entry<dyn PowerDomainController>> {
+    POWER_DOMAINS.iter()
+}
+
+/// Called by a driver's probe to hand over the controller it started on `device`.
+pub fn register(
+    device: &'static Device,
+    controller: impl PowerDomainController + 'static,
+) -> &'static dyn PowerDomainController {
+    let controller: &'static dyn PowerDomainController = Box::leak(Box::new(controller));
+    POWER_DOMAINS.register(device, controller);
+    controller
+}

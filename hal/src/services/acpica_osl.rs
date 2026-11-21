@@ -1,5 +1,5 @@
 //! ACPICA's OS services layer (OSL):
-//! 
+//!
 //! PCI configuration access is the legacy 0xCF8/0xCFC mechanism for segment 0
 //! only, kept private here; extended config space (ECAM) is not supported yet.
 
@@ -780,7 +780,7 @@ pub extern "C" fn AcpiOsInstallInterruptHandler(number: u32, handler: Option<Osd
 
     HANDLER_CTX[slot].store(context as usize, Ordering::Relaxed);
     HANDLER_FN[slot].store(handler as usize, Ordering::Release);
-    match interrupts::request(config.irq, config.trigger, config.polarity, interrupt_trampoline, slot as *mut ()) {
+    match interrupts::request_irq(config.irq, config.trigger, config.polarity, interrupt_trampoline, slot as *mut ()) {
         Ok(handle) => {
             installed[slot] = Some(Installed { number, handle });
             AE_OK

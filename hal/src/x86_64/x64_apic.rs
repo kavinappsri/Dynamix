@@ -18,7 +18,11 @@ use crate::driver_traits::interrupt_controller::{
 };
 use crate::services::acpi::MadtEntry;
 use crate::services::addr::{PhysAddr, PhysRange};
-use crate::services::device_query::DeviceQuery;
+use crate::driver;
+use crate::driver_traits::driver::{Match, ProbeError};
+use crate::driver_traits::{event_timer, interrupt_controller};
+use crate::services::acpi::Acpi;
+use crate::services::device::Device;
 use crate::services::interrupts::IrqConfig;
 use crate::services::mmio::Mmio;
 use crate::services::mmu;
@@ -379,11 +383,11 @@ fn cpu_has_apic() -> bool {
 
 /// Finds the APICs through the ACPI MADT, parks the legacy PIC, maps and
 /// masks every I/O APIC pin, and returns the controller.
-pub fn init(hardware: &dyn DeviceQuery) -> Result<&'static dyn InterruptController, IrqError> {
+fn init() -> Result<&'static dyn InterruptController, IrqError> {
     if !cpu_has_apic() {
         return Err(IrqError::NoController);
     }
-    let acpi = hardware.as_acpi().and_then(|root| root.acpi()).ok_or(IrqError::NoController)?;
+    let acpi = Acpi::get().ok_or(IrqError::NoController)?;
     let madt = acpi.madt().map_err(|_| IrqError::NoController)?;
 
     let mut io_found = [None::<(u32, u32)>; MAX_IOAPICS]; // (address, gsi base)
@@ -465,4 +469,24 @@ pub fn init(hardware: &dyn DeviceQuery) -> Result<&'static dyn InterruptControll
         }),
     });
     Ok(apic)
+}
+
+/// The APICs are described by the MADT, so that table is the device. One
+/// driver covers what lives in them: the interrupt controllers, and the
+/// local APIC's timer.
+fn probe(dev: &'static Device) -> Result<(), ProbeError> {
+    let controller = init().map_err(|error| match error {
+        IrqError::NoController => ProbeError::NotPresent,
+        _ => ProbeError::InitFailed,
+    })?;
+
+    interrupt_controller::register_static(dev, controller);
+    event_timer::register(dev, crate::x86_64::x64_timer::LapicTimer);
+    Ok(())
+}
+
+driver! {
+    name: "x64-apic",
+    matches: [Match::AcpiTable("APIC")],
+    probe: probe,
 }

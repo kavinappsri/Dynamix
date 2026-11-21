@@ -5,12 +5,11 @@
 //! 32 bit write as a write mask
 
 use crate::driver_traits::clocks::{ClockController, ClockError};
-use crate::driver_traits::driver::DriverProbeError;
-use crate::register_driver;
-use crate::services::device_query::DeviceQuery;
+use crate::driver;
+use crate::driver_traits::clocks;
+use crate::driver_traits::driver::{Match, ProbeError};
+use crate::services::device::Device;
 use crate::services::mmio::Mmio;
-use crate::services::sync::StaticCell;
-use crate::driver_traits::driver::Driver;
 
 const OSC_HZ: u32 = 24_000_000;
 
@@ -111,10 +110,8 @@ pub struct Rk3126Cru {
 unsafe impl Sync for Rk3126Cru {}
 
 impl Rk3126Cru {
-    unsafe fn new(base: usize) -> Self {
-        Self {
-            regs: unsafe { Mmio::new(base) },
-        }
+    fn new(regs: Mmio) -> Self {
+        Self { regs }
     }
 
     /// Performs a hiword-masked write: updates only the bits covered by
@@ -303,11 +300,14 @@ impl ClockController for Rk3126Cru {
     }
 }
 
-fn init_rk3126_cru(resource: crate::services::device_query::DeviceResource, _tree: &dyn DeviceQuery) -> Result<&'static dyn ClockController, DriverProbeError> {
-    let base = resource.mmio_base().ok_or(DriverProbeError::WrongResource)?;
-    static INSTANCE: StaticCell<Rk3126Cru> = StaticCell::uninit();
-    let cru = unsafe { Rk3126Cru::new(base) };
-    Ok(INSTANCE.get_or_init(|| cru))
+fn probe(dev: &'static Device) -> Result<(), ProbeError> {
+    let regs = dev.mem(0)?.mmio();
+    clocks::register(dev, Rk3126Cru::new(regs));
+    Ok(())
 }
 
-register_driver!(RK3126_CRU, "rockchip,rk3126-cru", init_rk3126_cru, ClockController);
+driver! {
+    name: "rk3126-cru",
+    matches: [Match::Fdt("rockchip,rk3126-cru")],
+    probe: probe,
+}

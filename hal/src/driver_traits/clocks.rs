@@ -1,9 +1,11 @@
-//! Generic clock controller interface and driver discovery
+//! Generic clock controller interface
 
-use crate::define_probe;
-use crate::services::sync::StaticCell;
+use alloc::boxed::Box;
 
-static ACTIVE_CLOCK: StaticCell<&'static dyn ClockController> = StaticCell::uninit();
+use crate::services::device::Device;
+use crate::services::registry::{Class, Entry, Iter};
+
+static CLOCKS: Class<dyn ClockController> = Class::new();
 
 /// Clock errors
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -25,8 +27,20 @@ pub trait ClockController : Sync {
 
 }
 
+/// The first clock controller that was bound, if any. Drivers that need one
+/// and find none return [`ProbeError::Defer`](crate::driver_traits::driver::ProbeError::Defer).
 pub fn active_clock() -> Option<&'static dyn ClockController> {
-    ACTIVE_CLOCK.get().copied()
+    CLOCKS.primary()
 }
 
-define_probe!(ClockController, probe_clocks, |driver| { ACTIVE_CLOCK.get_or_init(|| driver) } );
+/// Every clock controller that was bound, in the order they were bound.
+pub fn clock_controllers() -> Iter<Entry<dyn ClockController>> {
+    CLOCKS.iter()
+}
+
+/// Called by a driver's probe to hand over the clock controller it started on `device`.
+pub fn register(device: &'static Device, controller: impl ClockController + 'static) -> &'static dyn ClockController {
+    let controller: &'static dyn ClockController = Box::leak(Box::new(controller));
+    CLOCKS.register(device, controller);
+    controller
+}

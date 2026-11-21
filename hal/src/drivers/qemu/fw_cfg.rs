@@ -37,16 +37,9 @@ pub struct FwCfg {
 }
 
 impl FwCfg {
-    /// Creates an `fw_cfg` device from its mapped register base.
-    ///
-    /// # Safety
-    /// `base` must be a mapped QEMU `fw_cfg` MMIO device.
-    /// The device must remain accessible for the value's lifetime.
-    pub const unsafe fn new(base: usize) -> Self {
-        Self {
-            // SAFETY: upheld by this constructor's contract.
-            registers: unsafe { Mmio::new(base) },
-        }
+    /// Creates an `fw_cfg` device from its register window.
+    pub const fn new(registers: Mmio) -> Self {
+        Self { registers }
     }
 
     /// Finds a file selector in the firmware configuration directory.

@@ -8,21 +8,19 @@
 //! * the boot path for each architecture (`boot`, `x86_64::{uefi, handoff}`),
 //!   ending in a [`services::boot_info::BootInfo`] passed to the kernel's `rust_main`;
 //! * architecture-neutral services (`services`): MMU, physical memory manager,
-//!   exceptions, timer, power, and hardware discovery over either a device
-//!   tree or ACPI behind one [`services::device_query::DeviceQuery`] trait;
-//! * driver traits and linker-section based driver registration
+//!   exceptions, timer, power, and the device model
+//!   ([`services::device`]), which turns a device tree or the ACPI namespace
+//!   into devices and probes drivers for them;
+//! * driver traits, the driver table and the registries of bound drivers
 //!   (`driver_traits`), plus the drivers themselves (`drivers`).
-//!
-//! Hardware-specific constructors are unsafe because the caller owns the
-//! mapping and exclusivity guarantees.
 //!
 //! # Examples
 //!
 //! ```ignore
-//! use hal::{probe_serial, services::device_query::DeviceQuery};
+//! hal::services::device::init(hardware)?;
 //!
-//! let uart = probe_serial(hardware)?;
-//! uart.write_str("early boot complete\n");
+//! let uart = hal::active_serial().expect("no serial port");
+//! uart.write_byte(b'!');
 //! ```
 
 extern crate alloc;
@@ -43,7 +41,7 @@ pub mod x86_64;
 pub mod boot;
 
 pub use driver_traits::framebuffer::{Framebuffer, FramebufferError};
-pub use driver_traits::serial::{Serial, active_serial, probe_serial};
+pub use driver_traits::serial::{Serial, active_serial};
 
 // Boot assembly compilation
 #[cfg(any(target_arch = "aarch64", target_arch = "arm"))]

@@ -1,10 +1,10 @@
 //! 16550-compatible polling UART over x86 port I/O (the PC's COM ports).
 
 use crate::Serial;
-use crate::driver_traits::driver::{Driver, DriverProbeError};
-use crate::register_driver;
-use crate::services::device_query::{DeviceQuery, DeviceResource};
-use crate::services::sync::StaticCell;
+use crate::driver;
+use crate::driver_traits::driver::{Match, ProbeError};
+use crate::driver_traits::serial;
+use crate::services::device::{Device, IoPorts};
 use crate::x86_64::port::{inb, outb};
 
 /// Upper bound on status polls per transmitted byte, so a machine with no
@@ -28,9 +28,9 @@ impl Ns16550 {
     const LSR_DATA_READY: u8 = 1 << 0;
     const LSR_TX_EMPTY: u8 = 1 << 5;
 
-    /// Creates a UART from its first I/O port.
-    pub const unsafe fn new(base: u16) -> Self {
-        Self { base }
+    /// Creates a UART from the I/O ports the firmware gave it.
+    pub const fn new(ports: IoPorts) -> Self {
+        Self { base: ports.base() }
     }
 
     /// Whether something that behaves like a 16550 answers at these ports.
@@ -85,18 +85,19 @@ impl Serial for Ns16550 {
     }
 }
 
-fn init_ns16550(resource: DeviceResource, _tree: &dyn DeviceQuery) -> Result<&'static dyn Serial, DriverProbeError> {
-    static INSTANCE: StaticCell<Ns16550> = StaticCell::uninit();
-
-    let base = resource.io_base().ok_or(DriverProbeError::WrongResource)?;
-    // SAFETY: the platform description named these ports as a 16550 UART.
-    let uart = unsafe { Ns16550::new(base) };
+fn probe(dev: &'static Device) -> Result<(), ProbeError> {
+    let uart = Ns16550::new(dev.io(0)?);
     if !uart.present() {
-        return Err(DriverProbeError::InitFailed);
+        return Err(ProbeError::NotPresent);
     }
     uart.configure();
-    Ok(INSTANCE.get_or_init(|| uart))
+    serial::register(dev, uart);
+    Ok(())
 }
 
 // ACPI names a 16550 `PNP0501`.
-register_driver!(NS16550_UART, "PNP0501", init_ns16550, Serial);
+driver! {
+    name: "ns16550",
+    matches: [Match::Acpi("PNP0501")],
+    probe: probe,
+}

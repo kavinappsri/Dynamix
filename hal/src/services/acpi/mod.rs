@@ -40,7 +40,6 @@ pub use subsystem::{Acpi, AcpiLevel};
 use core::fmt;
 
 use crate::services::addr::PhysAddr;
-use crate::services::device_query::{DeviceQuery, DeviceResource};
 
 /// The ACPI description of a machine, as the bootloader found it: where the
 /// RSDP is, and nothing else.
@@ -99,32 +98,5 @@ impl fmt::Display for AcpiRoot {
             return write!(f, "ACPI ({})", acpi.level());
         }
         write!(f, "ACPI")
-    }
-}
-
-impl DeviceQuery for AcpiRoot {
-    /// Finds the first present device whose `_HID` or `_CID` is `compatible` and returns the first
-    /// I/O or memory range of its `_CRS`.
-    fn find_compatible_resource(&self, compatible: &str) -> Option<DeviceResource> {
-        #[cfg(target_arch = "x86_64")]
-        {
-            let namespace = self.acpi()?.namespace().ok()?;
-            namespace
-                .devices(compatible)
-                .ok()?
-                .into_iter()
-                .filter_map(|device| device.resources().ok())
-                .flatten()
-                .find_map(|resource| resource.to_device_resource())
-        }
-        #[cfg(not(target_arch = "x86_64"))]
-        {
-            let _ = compatible;
-            None
-        }
-    }
-
-    fn as_acpi(&self) -> Option<&AcpiRoot> {
-        Some(self)
     }
 }

@@ -1,7 +1,6 @@
 pub mod addr;
 pub mod boot_info;
 pub mod cpu;
-pub mod device_query;
 pub mod dtb;
 pub mod exceptions;
 pub mod fault;
@@ -17,7 +16,8 @@ pub mod interrupts;
 pub mod work;
 #[cfg(target_arch = "x86_64")]
 pub mod acpica_osl;
-pub mod acpica;
 pub mod acpi;
 pub mod klog;
+pub mod device;
+pub mod registry;
 
