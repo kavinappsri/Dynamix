@@ -16,6 +16,8 @@ mod resource;
 #[cfg(target_arch = "x86_64")]
 mod sleep;
 #[cfg(target_arch = "x86_64")]
+mod spcr;
+#[cfg(target_arch = "x86_64")]
 mod subsystem;
 #[cfg(target_arch = "x86_64")]
 mod table;
@@ -34,6 +36,8 @@ pub use namespace::{Device, DeviceInfo, Namespace};
 pub use resource::{AddressSpace, Resource};
 #[cfg(target_arch = "x86_64")]
 pub use sleep::SleepState;
+#[cfg(target_arch = "x86_64")]
+pub use spcr::SerialAddress;
 #[cfg(target_arch = "x86_64")]
 pub use subsystem::{Acpi, AcpiLevel};
 

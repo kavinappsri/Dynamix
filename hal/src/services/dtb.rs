@@ -37,6 +37,10 @@ impl<'a> Dtb<'a> {
     /// # Safety
     /// The caller must ensure `ptr` points to valid, accessible memory containing a DTB.
     /// Its header's total-size field must describe a readable contiguous range.
+    ///
+    /// # Errors
+    /// Returns [`DtbError::NullPointer`] for a zero pointer and
+    /// [`DtbError::InvalidMagic`] if the header does not contain an FDT magic.
     pub unsafe fn from_ptr(ptr: usize) -> Result<Self, DtbError> {
         if ptr == 0 {
             return Err(DtbError::NullPointer);
@@ -63,20 +67,10 @@ impl<'a> Dtb<'a> {
         })
     }
 
-    /// Finds the first device node compatible with `compatible`.
-    pub fn find_compatible(&self, compatible: &str) -> Option<Node<'a>> {
-        self.nodes().find(|node| node.is_compatible(compatible))
-    }
-
-    /// Finds the first node whose name contains `name_part`.
-    ///
-    /// This is a substring search, not a path lookup; use it only when that
-    /// looser matching behavior is intended.
-    pub fn find_node(&self, name_part: &str) -> Option<Node<'a>> {
-        self.nodes().find(|&node| node.name().contains(name_part))
-    }
-
     /// Writes the RAM regions the tree describes into `out`; returns how many.
+    ///
+    /// These are the `reg` entries of the root's `memory` nodes (every entry
+    /// of every node), so it works before the heap exists.
     pub fn memory_regions(&self, out: &mut [PhysRange]) -> usize {
         let mut count = 0;
         self.walk(|walked| {
@@ -102,12 +96,13 @@ impl<'a> Dtb<'a> {
         count
     }
 
-    /// Visits every node in tree order
+    /// Visits every node in tree order, with what is needed to read its `reg`
+    /// the way the CPU sees it. Does not allocate.
     pub fn walk(&self, mut visit: impl FnMut(&WalkedNode<'_, 'a>)) {
         let slice = self.slice;
         let mut frames = [Frame::DEFAULT; MAX_DEPTH];
         let mut depth = 0usize;
-        // Nodes nested deeper than `MAX_DEPTH`
+        // Nodes nested deeper than `MAX_DEPTH`, which are not visited.
         let mut too_deep = 0usize;
         let mut offset = self.struct_off;
 
@@ -188,19 +183,50 @@ impl<'a> Dtb<'a> {
         self.nodes().find(|node| node.phandle() == Some(phandle))
     }
 
-    /// Finds a node by its device tree path
+    /// Finds a node by its full device tree path (`/soc/uart@9000000`).
+    ///
+    /// A component may leave out the unit address (`/soc/uart`), as the
+    /// specification allows.
     pub fn find_path(&self, path: &str) -> Option<Node<'a>> {
         let path = path.trim_end_matches('\0');
-        if path == "/" {
-            return self.nodes().find(|n| n.name() == "/")
-        }
-
-        let target_name = path.rsplit('/').next()?;
-        if target_name.is_empty() {
+        if !path.starts_with('/') {
             return None;
         }
 
-        self.nodes().find(|node| node.name() == target_name)
+        let mut wanted = [""; MAX_DEPTH];
+        let mut count = 0;
+        for component in path.split('/').filter(|component| !component.is_empty()) {
+            *wanted.get_mut(count)? = component;
+            count += 1;
+        }
+
+        let mut names = [""; MAX_DEPTH];
+        let mut found = None;
+        self.walk(|walked| {
+            let depth = walked.depth();
+            let node = walked.node();
+            names[depth] = node.name();
+            if found.is_none()
+                && depth == count
+                && (1..=depth).all(|level| path_component_matches(wanted[level - 1], names[level]))
+            {
+                found = Some(node);
+            }
+        });
+        found
+    }
+
+    /// The node `/chosen/stdout-path` names: the device the firmware used as
+    /// its console. The value is a path or an alias, optionally followed by
+    /// `:` and serial settings, which are not our business.
+    pub fn stdout_node(&self) -> Option<Node<'a>> {
+        let chosen = self.nodes().find(|node| node.name() == "chosen")?;
+        let value = chosen
+            .property("stdout-path")
+            .or_else(|| chosen.property("linux,stdout-path"))?
+            .as_str()?;
+        let path = value.split(':').next()?;
+        if path.starts_with('/') { self.find_path(path) } else { self.find_alias(path) }
     }
 
     /// Finds node by alias
@@ -234,12 +260,13 @@ impl<'a> Node<'a> {
         self.dtb
     }
 
-    /// Where the node starts in the structure block; unique per node
+    /// Where the node starts in the structure block; unique per node, so two
+    /// handles are the same node exactly when their offsets are equal.
     pub fn offset(&self) -> usize {
         self.struct_offset
     }
 
-    /// The node's `compatible` strings, most specific first
+    /// The node's `compatible` strings, most specific first.
     pub fn compatible(&self) -> impl Iterator<Item = &'a str> + use<'a> {
         self.property("compatible")
             .map(|prop| prop.value())
@@ -249,12 +276,12 @@ impl<'a> Node<'a> {
             .filter(|string| !string.is_empty())
     }
 
-    /// Returns whether the node's `compatible` property contains `compat_str`
+    /// Returns whether one of the node's `compatible` strings is exactly `compat_str`.
     pub fn is_compatible(&self, compat_str: &str) -> bool {
         self.compatible().any(|candidate| candidate == compat_str)
     }
 
-    /// Whether `status` allows the node to be used
+    /// Whether `status` allows the node to be used (absent means yes).
     pub fn is_enabled(&self) -> bool {
         matches!(self.property("status").and_then(|prop| prop.as_str()), None | Some("okay") | Some("ok"))
     }
@@ -451,23 +478,25 @@ fn read_be_u32(slice: &[u8], offset: usize) -> u32 {
     u32::from_be_bytes(bytes)
 }
 
-/// Most nested levels [`Dtb::walk`] follows
+// -------------------------------- Walking --------------------------------
+
+/// Most nested levels [`Dtb::walk`] follows; deeper nodes are skipped.
 const MAX_DEPTH: usize = 24;
 
-/// What a node says about the space its children live in
+/// What a node says about the space its children live in.
 #[derive(Clone, Copy)]
 struct Frame<'a> {
-    /// `#address-cells` (2 if the node does not say)
+    /// `#address-cells` (2 if the node does not say).
     addr_cells: u32,
-    /// `#size-cells` (1 if the node does not say)
+    /// `#size-cells` (1 if the node does not say).
     size_cells: u32,
     /// `ranges`: `None` if absent, which means the children's addresses are
-    /// not CPU addresses (an I2C bus, say); empty means they are the same
+    /// not CPU addresses (an I2C bus, say); empty means they are the same.
     ranges: Option<&'a [u8]>,
-    /// This node and every node above it are enabled
+    /// This node and every node above it are enabled.
     enabled: bool,
     /// The phandle in effect as `interrupt-parent`: the node's own, else the
-    /// nearest ancestor's
+    /// nearest ancestor's.
     interrupt_parent: Option<u32>,
 }
 
@@ -506,6 +535,11 @@ impl<'a> WalkedNode<'_, 'a> {
 
     /// Calls `f(address, size)` for each `reg` entry, with `address` as the CPU
     /// sees it (translated through the `ranges` of every bus above).
+    ///
+    /// Returns `false`, calling `f` for nothing, if the node's `reg` is not
+    /// memory the CPU can reach: it sits on a bus without `ranges`, or uses
+    /// cell sizes this reader does not support. A node without `reg` returns
+    /// `true`.
     pub fn for_each_reg(&self, mut f: impl FnMut(u64, u64)) -> bool {
         let Some(parent) = self.depth.checked_sub(1).map(|parent| &self.frames[parent]) else {
             return false;
@@ -572,6 +606,7 @@ impl<'a> WalkedNode<'_, 'a> {
     }
 }
 
+/// Reads `cells` (0, 1 or 2) big-endian words starting at word `word`.
 fn cells_at(bytes: &[u8], word: usize, cells: usize) -> Option<u64> {
     let read = |index: usize| -> Option<u64> {
         let at = index.checked_mul(4)?;
@@ -584,4 +619,10 @@ fn cells_at(bytes: &[u8], word: usize, cells: usize) -> Option<u64> {
         2 => Some((read(word)? << 32) | read(word + 1)?),
         _ => None,
     }
+}
+
+/// Whether path component `wanted` names the node called `name`. A component
+/// without a unit address matches a node with any.
+fn path_component_matches(wanted: &str, name: &str) -> bool {
+    wanted == name || (!wanted.contains('@') && name.split('@').next() == Some(wanted))
 }

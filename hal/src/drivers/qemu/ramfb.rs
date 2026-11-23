@@ -3,16 +3,15 @@
 use core::mem::size_of;
 
 use crate::driver_traits::framebuffer::FramebufferError::{DestinationOutOfBounds, DimensionsOverflow, SourceTooSmall};
-use crate::drivers::qemu::fw_cfg::FwCfg;
+use crate::drivers::qemu::fw_cfg::{FwCfg, RAMFB_FILE};
 use crate::driver;
 use crate::driver_traits::driver::{Match, ProbeError};
 use crate::driver_traits::framebuffer;
 use crate::services::device::Device;
-use crate::services::mmio::Mmio;
+use crate::services::provider;
 use crate::services::pmm;
 use crate::{Framebuffer, FramebufferError};
 
-const RAMFB_FILE: &str = "etc/ramfb";
 const XRGB8888: u32 = 0x3432_5258;
 const WIDTH: usize = 1024;
 const HEIGHT: usize = 600;
@@ -48,8 +47,7 @@ struct RamFb {
 unsafe impl Sync for RamFb {}
 
 impl RamFb {
-    fn configure(registers: Mmio) -> Result<Self, ProbeError> {
-        let fw_cfg = FwCfg::new(registers);
+    fn configure(fw_cfg: &FwCfg) -> Result<Self, ProbeError> {
         let selector = fw_cfg
             .find_file(RAMFB_FILE)
             .map_err(|_| ProbeError::InitFailed)?
@@ -131,14 +129,14 @@ impl Framebuffer for RamFb {
 }
 
 fn probe(dev: &'static Device) -> Result<(), ProbeError> {
-    let registers = dev.mem(0)?.mmio();
-    framebuffer::register(dev, RamFb::configure(registers)?);
+    // Spawned by the `fw_cfg` driver, whose device is this one's parent.
+    let fw_cfg: &FwCfg = provider::get(dev.parent().ok_or(ProbeError::Firmware)?)?;
+    framebuffer::register(dev, RamFb::configure(fw_cfg)?);
     Ok(())
 }
 
 driver! {
     name: "ramfb",
-    matches: [Match::Fdt("qemu,fw-cfg-mmio")],
+    matches: [Match::Spawned("qemu,ramfb")],
     probe: probe,
 }
-

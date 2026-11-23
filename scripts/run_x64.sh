@@ -18,4 +18,5 @@ qemu-system-x86_64 \
   -net none \
   -d "${QEMU_DEBUG:-int,cpu_reset,guest_errors}" \
   -no-reboot \
+  -acpitable file=scripts/spcr.aml\
   -D dynamix64.log

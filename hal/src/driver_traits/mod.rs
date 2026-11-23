@@ -1,10 +1,8 @@
 //! Folder that houses the abstraction traits for the drivers
 
-pub mod clocks;
 pub mod framebuffer;
 pub mod serial;
 pub mod driver;
-pub mod power_domain;
 pub mod interrupt_controller;
 pub mod system_power;
 pub mod event_timer;

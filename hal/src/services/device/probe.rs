@@ -1,4 +1,4 @@
-//! matching drivers to devices
+//! Matching devices to drivers and running their probes.
 
 use alloc::vec::Vec;
 
@@ -6,17 +6,20 @@ use super::{Device, Origin, State};
 use crate::driver_traits::driver::{self, DriverInfo, Match, ProbeError};
 use crate::services::klog::{self, Level, Source};
 
+/// What [`super::init`] managed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Report {
-    /// Devices the firmware described
+    /// Devices the firmware described.
     pub devices: usize,
-    /// Devices a driver took
+    /// Devices a driver took.
     pub bound: usize,
-    /// Devices a driver matched but could not start, including deferred
+    /// Devices a driver matched but could not start (including ones still
+    /// waiting for a dependency at the end).
     pub failed: usize,
 }
 
-/// How well `driver` fits `device`, `None` if it doesn't fit
+/// How well `driver` fits `device`: the position of the best match in the
+/// device's id list, so the most specific id wins. `None` if it does not fit.
 fn score(device: &Device, driver: &DriverInfo) -> Option<usize> {
     driver
         .matches
@@ -28,6 +31,7 @@ fn score(device: &Device, driver: &DriverInfo) -> Option<usize> {
                 (Match::Acpi(id), Origin::Acpi(_)) => *id,
                 #[cfg(target_arch = "x86_64")]
                 (Match::AcpiTable(id), Origin::AcpiTable) => *id,
+                (Match::Spawned(id), Origin::Spawned { .. }) => *id,
                 _ => return None,
             };
             device.ids().iter().position(|have| have == id)
@@ -35,13 +39,14 @@ fn score(device: &Device, driver: &DriverInfo) -> Option<usize> {
         .min()
 }
 
-/// Tries the drivers that fit `device`, best fit first. returns `true` is bound
+/// Tries the drivers that fit `device`, best fit first. Returns whether it
+/// ended up bound.
 fn attempt(device: &'static Device, table: &'static [DriverInfo]) -> bool {
     let mut candidates: Vec<(usize, &'static DriverInfo)> = table
         .iter()
         .filter_map(|driver| score(device, driver).map(|score| (score, driver)))
         .collect();
-
+    // Stable, so equally good drivers are tried in table order.
     candidates.sort_by_key(|(score, _)| *score);
 
     if candidates.is_empty() {
@@ -78,7 +83,8 @@ fn attempt(device: &'static Device, table: &'static [DriverInfo]) -> bool {
     false
 }
 
-/// Probes every device
+/// Probes every device, repeating until a whole pass binds nothing new, so a
+/// driver that deferred gets another go once its dependency has appeared.
 pub(super) fn probe_all() -> Report {
     let table = driver::table();
 

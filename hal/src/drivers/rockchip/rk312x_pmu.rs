@@ -4,10 +4,28 @@
 
 use crate::driver;
 use crate::driver_traits::driver::{Match, ProbeError};
-use crate::driver_traits::power_domain::{self, PowerDomainController, PowerDomainError};
-use crate::services::device::Device;
+use crate::services::addr::{PhysAddr, PhysRange};
+use crate::services::device::{Device, Resource};
 use crate::services::mmio::Mmio;
+use crate::services::provider;
 use crate::services::timer::delay_ms;
+
+/// The PMU's `compatible` string, which is also the id of the device that
+/// [`obtain`] spawns when the board's tree does not describe one.
+const COMPATIBLE: &str = "rockchip,rk3128-pmu";
+
+/// Where the PMU's registers are on RK3126/RK3128, for boards whose device
+/// tree leaves it out. A tree that has the node is believed over this.
+const FALLBACK_BASE: usize = 0x2000_4000;
+const FALLBACK_SIZE: usize = 0x100;
+
+/// Why a power domain request failed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PowerDomainError {
+    /// The controller gave up waiting for a status/ack bit to reflect the
+    /// requested change.
+    Timeout,
+}
 
 const PMU_PWRDN_CON: usize = 0x04;
 const PMU_PWRDN_ST: usize = 0x08;
@@ -50,24 +68,9 @@ impl Rk3126PowerDomain {
     }
 }
 
-impl TryFrom<u32> for Rk3126PowerDomain {
-    type Error = PowerDomainError;
-
-    fn try_from(value: u32) -> Result<Self, PowerDomainError> {
-        match value {
-            0 => Ok(Self::Vio),
-            1 => Ok(Self::Gpu),
-            2 => Ok(Self::Video),
-            _ => Err(PowerDomainError::UnknownDomain),
-        }
-    }
-}
-
 pub struct Rk3126Pmu {
     regs: Mmio,
 }
-
-unsafe impl Sync for Rk3126Pmu {}
 
 impl Rk3126Pmu {
     fn new(regs: Mmio) -> Self {
@@ -99,9 +102,10 @@ impl Rk3126Pmu {
     }
 }
 
-impl PowerDomainController for Rk3126Pmu {
-    fn power_on(&self, domain: u32) -> Result<(), PowerDomainError> {
-        let bits = Rk3126PowerDomain::try_from(domain)?.bits();
+impl Rk3126Pmu {
+    /// Powers a domain on, blocking until the controller confirms it.
+    pub fn power_on(&self, domain: Rk3126PowerDomain) -> Result<(), PowerDomainError> {
+        let bits = domain.bits();
 
         // Clear the power-down bit
         self.set_bit(PMU_PWRDN_CON, bits.pwr_bit, false);
@@ -116,8 +120,9 @@ impl PowerDomainController for Rk3126Pmu {
         Ok(())
     }
 
-    fn power_off(&self, domain: u32) -> Result<(), PowerDomainError> {
-        let bits = Rk3126PowerDomain::try_from(domain)?.bits();
+    /// Powers a domain off, blocking until the controller confirms it.
+    pub fn power_off(&self, domain: Rk3126PowerDomain) -> Result<(), PowerDomainError> {
+        let bits = domain.bits();
 
         // Ask the domain's NIU to flush in-flight transactions before
         // cutting power, and wait for it to confirm
@@ -132,21 +137,29 @@ impl PowerDomainController for Rk3126Pmu {
         Ok(())
     }
 
-    fn is_powered_on(&self, domain: u32) -> Result<bool, PowerDomainError> {
-        let bits = Rk3126PowerDomain::try_from(domain)?.bits();
+    /// Whether `domain` is powered on now.
+    pub fn is_powered_on(&self, domain: Rk3126PowerDomain) -> bool {
+        let bits = domain.bits();
         let powered_down = (self.regs.read32(PMU_PWRDN_ST) >> bits.pwr_bit) & 1 != 0;
-        Ok(!powered_down)
+        !powered_down
     }
+}
+
+/// The PMU, for a driver that needs it.
+pub fn obtain(consumer: &'static Device) -> Result<&'static Rk3126Pmu, ProbeError> {
+    let registers = Resource::Mem(PhysRange::new(PhysAddr::new(FALLBACK_BASE), FALLBACK_SIZE));
+    let device = consumer.spawn_once("rk3126-pmu", &[COMPATIBLE], &[registers]);
+    provider::get(device)
 }
 
 fn probe(dev: &'static Device) -> Result<(), ProbeError> {
     let regs = dev.mem(0)?.mmio();
-    power_domain::register(dev, Rk3126Pmu::new(regs));
+    provider::register(dev, Rk3126Pmu::new(regs));
     Ok(())
 }
 
 driver! {
     name: "rk3126-pmu",
-    matches: [Match::Fdt("rockchip,rk3128-pmu")],
+    matches: [Match::Fdt(COMPATIBLE), Match::Spawned(COMPATIBLE)],
     probe: probe,
 }

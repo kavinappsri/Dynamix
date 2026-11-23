@@ -19,7 +19,7 @@ as well learn how this thing works
 To properly run this, you'll need a few things, such as
 1. QEMU (or) An actual device (if you're insane)
 2. Rust 2024 or newer
-3. OVMF (if you're targeting x86_64)
+3. OVMF & `iasl` (if you're targeting x86_64)
 4. Patience
 
 ### Actually Doing it
@@ -27,7 +27,7 @@ To properly run this, you'll need a few things, such as
 Here I'm going to assume you're gonna run it on QEMU, 
 
 1. Clone the git onto your computer. 
-2. If your running it for x86_64, make a folder called `ovmf` at project root. copy the code and vars file into it
+2. If your running it for x86_64, make a folder called `ovmf` at project root. copy the code and vars file into it. Also compile the asl file in scripts
 3. Now, simply do `cargo run --features board-qemu-virt`. if everything is set up properly, it should work.
 
 Now, if you're going to do it on actual hardware, I'd recommend you do it on a x64 laptop with UEFI. That way everything has a 

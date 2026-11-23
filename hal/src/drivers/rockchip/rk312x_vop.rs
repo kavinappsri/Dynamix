@@ -8,15 +8,15 @@
 //! - No VOP-internal IOMMU setup
 
 
-use crate::driver_traits::clocks::ClockController;
 use crate::driver;
-use crate::driver_traits::clocks;
 use crate::driver_traits::driver::{Match, ProbeError};
 use crate::driver_traits::framebuffer;
-use crate::services::device::Device;
+use crate::services::device::{Device, FdtLink};
+use crate::services::provider;
 use crate::driver_traits::framebuffer::{FramebufferError, Framebuffer};
 use crate::services::mmio::Mmio;
-use crate::drivers::rockchip::rk312x_cru::Rk3126Clock;
+use crate::drivers::rockchip::rk312x_cru::{Rk3126Clock, Rk3126Cru};
+use crate::drivers::rockchip::rk312x_pmu::{self, Rk3126PowerDomain, Rk3126Pmu};
 use crate::services::addr::PhysRange;
 use crate::services::pmm;
 use crate::services::mmu;
@@ -144,27 +144,31 @@ impl Rk312xVop {
     }
 
     /// Un-gates and rate-sets every clock the VOP output path needs
-    fn bring_up_clocks(clocks: &dyn ClockController, mode: &Mode) -> Result<(), ProbeError> {
+    fn bring_up_clocks(clocks: &Rk3126Cru, mode: &Mode) -> Result<(), ProbeError> {
         clocks
-            .enable(Rk3126Clock::AclkLcdc0 as u32)
+            .enable(Rk3126Clock::AclkLcdc0)
             .map_err(|_| ProbeError::InitFailed)?;
         clocks
-            .enable(Rk3126Clock::HclkLcdc0 as u32)
+            .enable(Rk3126Clock::HclkLcdc0)
             .map_err(|_| ProbeError::InitFailed)?;
 
         // The divider must be programmed before the pixel clock is ungated
         clocks
-            .set_rate(Rk3126Clock::DclkVop as u32, mode.pixel_clock_hz)
+            .set_rate(Rk3126Clock::DclkVop, mode.pixel_clock_hz)
             .map_err(|_| ProbeError::InitFailed)?;
         clocks
-            .enable(Rk3126Clock::DclkVop as u32)
+            .enable(Rk3126Clock::DclkVop)
             .map_err(|_| ProbeError::InitFailed)?;
 
         Ok(())
     }
 
-    fn configure(regs: Mmio, clocks: &dyn ClockController) -> Result<Self, ProbeError> {
+    fn configure(regs: Mmio, clocks: &Rk3126Cru, pmu: &Rk3126Pmu) -> Result<Self, ProbeError> {
         let mode = DEFAULT_MODE;
+
+        // The VOP sits in the video I/O power domain; its registers do not
+        // answer while that is off.
+        pmu.power_on(Rk3126PowerDomain::Vio).map_err(|_| ProbeError::InitFailed)?;
         Self::bring_up_clocks(clocks, &mode)?;
 
         let frame = pmm::alloc_frames(FRAMEBUFFER_ORDER).map_err(|_| ProbeError::MappingFailed)?;
@@ -331,10 +335,16 @@ impl Framebuffer for Rk312xVop {
 
 fn probe(dev: &'static Device) -> Result<(), ProbeError> {
     let regs = dev.mem(0)?.mmio();
-    // The pixel clock comes from the CRU, which may not have been probed yet.
-    let clocks = clocks::active_clock().ok_or(ProbeError::Defer)?;
+    
+    let clocks: &Rk3126Cru = match dev.fdt_link(&FdtLink::CLOCKS, "dclk_lcdc") {
+        Ok(controller) => provider::get(controller)?,
+        Err(ProbeError::MissingResource) => provider::first().ok_or(ProbeError::Defer)?,
+        Err(error) => return Err(error),
+    };
 
-    framebuffer::register(dev, Rk312xVop::configure(regs, clocks)?);
+    let pmu = rk312x_pmu::obtain(dev)?;
+
+    framebuffer::register(dev, Rk312xVop::configure(regs, clocks, pmu)?);
     Ok(())
 }
 

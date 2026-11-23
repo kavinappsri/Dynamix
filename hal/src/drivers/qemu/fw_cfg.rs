@@ -6,7 +6,14 @@ use core::{
     sync::atomic::{Ordering, compiler_fence},
 };
 
+use crate::driver;
+use crate::driver_traits::driver::{Match, ProbeError};
+use crate::services::device::Device;
 use crate::services::mmio::Mmio;
+use crate::services::provider;
+
+/// The `fw_cfg` file that exists when QEMU was started with `-device ramfb`.
+pub const RAMFB_FILE: &str = "etc/ramfb";
 
 const DATA: usize = 0x00;
 const SELECTOR: usize = 0x08;
@@ -45,20 +52,6 @@ impl FwCfg {
     /// Finds a file selector in the firmware configuration directory.
     ///
     /// Returns `Ok(None)` if no exact file-name match exists.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`FwCfgError::FileNameTooLong`] when `name` cannot fit in an
-    /// `fw_cfg` directory entry.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// if let Some(selector) = fw_cfg.find_file("etc/ramfb")? {
-    ///     // Use `selector` for a subsequent transfer.
-    /// }
-    /// # Ok::<(), hal::FwCfgError>(())
-    /// ```
     pub fn find_file(&self, name: &str) -> Result<Option<u16>, FwCfgError> {
         let name = name.as_bytes();
         if name.len() >= DIRECTORY_NAME_LENGTH {
@@ -129,4 +122,19 @@ impl FwCfg {
             self.registers.read8(DATA);
         }
     }
+}
+
+fn probe(dev: &'static Device) -> Result<(), ProbeError> {
+    let fw_cfg = provider::register(dev, FwCfg::new(dev.mem(0)?.mmio()));
+
+    if matches!(fw_cfg.find_file(RAMFB_FILE), Ok(Some(_))) {
+        dev.spawn("ramfb", &["qemu,ramfb"], &[]);
+    }
+    Ok(())
+}
+
+driver! {
+    name: "fw-cfg",
+    matches: [Match::Fdt("qemu,fw-cfg-mmio")],
+    probe: probe,
 }

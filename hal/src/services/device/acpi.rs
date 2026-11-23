@@ -1,20 +1,29 @@
-//! Devices from ACPI namespace
+//! Devices from the ACPI namespace.
+//!
+//! Every present device with a `_HID` or `_CID` becomes a device. Their
+//! resources are not read here: `_CRS` is AML, and running it for every
+//! device on a machine would be slow and would expose every firmware bug in
+//! the namespace, so it only runs for devices a driver actually wants (see
+//! [`Device::resources`](super::Device::resources)).
 
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
-use crate::driver_traits::interrupt_controller::{Irq, IrqSpec};
-use crate::services::acpi::{AcpiError, AcpiRoot, AddressSpace, Device as AcpiDevice, Resource as AcpiResource};
+
+use super::{Device, IoPorts, IrqSpec, Origin, Resource, register};
+use crate::driver_traits::interrupt_controller::Irq;
+use crate::services::acpi::{
+    AcpiError, AcpiRoot, AddressSpace, Device as AcpiDevice, MadtEntry, Resource as AcpiResource,
+};
 use crate::services::addr::{PhysAddr, PhysRange};
 use crate::services::boot_info::HardwareError;
-use crate::services::device::{register, Device, Origin, Resource, IoPorts};
 
 pub(super) fn enumerate(root: &AcpiRoot) -> Result<(), HardwareError> {
     let acpi = root.acpi().ok_or(AcpiError::NotReady)?;
     let namespace = acpi.namespace()?;
 
     for device in namespace.all_devices()? {
-        // leave if device info error
+        // A device whose description cannot be read is left out, not fatal.
         let Ok(info) = device.info() else { continue };
 
         let mut ids: Vec<String> = Vec::new();
@@ -24,26 +33,50 @@ pub(super) fn enumerate(root: &AcpiRoot) -> Result<(), HardwareError> {
 
         let name = match &info.unique_id {
             Some(unique) => format!("{first}:{unique}"),
-            None => first.clone()
+            None => first.clone(),
         };
         register(Device::new(name, ids, Origin::Acpi(device), None));
     }
-    if acpi.madt().is_ok() {
-        register_table("APIC")
-    }
-    register_table("FACP");
 
+    // Hardware ACPI describes in tables, not in the namespace. The MADT only
+    // counts when this machine has one; the FADT is mandatory.
+    if let Ok(madt) = acpi.madt() {
+        // The I/O APICs' register windows. The local APIC's is left out on
+        // purpose: its base lives in an MSR the CPU can relocate, and that
+        // is what the APIC driver goes by.
+        let windows = madt
+            .entries()
+            .filter_map(|entry| match entry {
+                MadtEntry::IoApic { address, .. } => {
+                    Some(Resource::Mem(PhysRange::new(PhysAddr::new(address as usize), IOAPIC_WINDOW)))
+                }
+                _ => None,
+            })
+            .collect();
+        register_table("APIC", windows);
+    }
+    register_table("FACP", Vec::new());
     Ok(())
 }
 
-fn register_table(signature: &str) {
-    register(Device::new(String::from(signature), alloc::vec![String::from(signature)], Origin::AcpiTable, Some(Vec::new())));
+/// Size of an I/O APIC's register window.
+const IOAPIC_WINDOW: usize = 0x1000;
+
+fn register_table(signature: &str, resources: Vec<Resource>) {
+    register(Device::new(
+        String::from(signature),
+        alloc::vec![String::from(signature)],
+        Origin::AcpiTable,
+        Some(resources),
+    ));
 }
 
+/// Evaluates the device's `_CRS` into resources.
 pub(super) fn load_resources(device: &AcpiDevice) -> Result<Vec<Resource>, AcpiError> {
     let described = match device.resources() {
         Ok(list) => list,
-        Err(AcpiError::NotFound) => Vec::new(),
+        // No `_CRS`: the device uses nothing.
+        Err(AcpiError::NotFound) => return Ok(Vec::new()),
         Err(error) => return Err(error),
     };
 
@@ -51,7 +84,7 @@ pub(super) fn load_resources(device: &AcpiDevice) -> Result<Vec<Resource>, AcpiE
     for resource in described {
         match resource {
             AcpiResource::Io { min, length, .. } if length > 0 => {
-                resources.push(Resource::Io(IoPorts::new(min, u16::from(length))))
+                resources.push(Resource::Io(IoPorts::new(min, u16::from(length))));
             }
             AcpiResource::FixedIo { base, length } if length > 0 => {
                 resources.push(Resource::Io(IoPorts::new(base, u16::from(length))));

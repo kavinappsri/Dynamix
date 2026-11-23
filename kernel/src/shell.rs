@@ -157,6 +157,19 @@ pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
                         continue;
                     }
                     let _ = write!(console, "{:<28} {}", device.name(), state);
+                    if let Ok(resources) = device.resources() {
+                        for resource in resources.iter().take(1) {
+                            match resource {
+                                hal::services::device::Resource::Mem(range) => {
+                                    let _ = write!(console, ", mem {:#x}", range.start().as_usize());
+                                }
+                                hal::services::device::Resource::Io(ports) => {
+                                    let _ = write!(console, ", io {:#x}", ports.base());
+                                }
+                                hal::services::device::Resource::Irq(_) => {}
+                            }
+                        }
+                    }
                     if let Ok(spec) = device.irq(0) {
                         let _ = write!(console, ", irq {} ({:?}, {:?})", spec.irq.0, spec.trigger, spec.polarity);
                     }

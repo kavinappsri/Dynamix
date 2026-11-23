@@ -6,7 +6,8 @@
 //! then matches devices against it.
 //!
 //! Matches are per firmware on purpose. A device tree names hardware with
-//! `compatible` strings and ACPI names it with `_HID`/`_CID`s; A
+//! `compatible` strings and ACPI names it with `_HID`/`_CID`s; those are
+//! different vocabularies, and most drivers only exist for one of them. A
 //! driver that has both just lists both.
 //!
 //! ### How the table is collected, per target
@@ -19,6 +20,7 @@
 //!   `.drv$z` another marker; the entries are what lies between the markers.
 
 use core::fmt;
+
 use crate::services::device::Device;
 
 /// What a driver says it can drive.
@@ -28,10 +30,17 @@ pub enum Match {
     Fdt(&'static str),
     /// An ACPI `_HID` or `_CID`.
     Acpi(&'static str),
-    /// Hardware ACPI table
+    /// Hardware that ACPI describes in a table rather than in the namespace,
+    /// by the table's signature: `"APIC"` for the MADT (local APICs, I/O
+    /// APICs), `"FACP"` for the FADT (power management).
     AcpiTable(&'static str),
+    /// A device another driver announced with [`Device::spawn`], by one of the
+    /// ids that driver gave it. Not firmware's description at all, so it is
+    /// the same on every architecture.
+    Spawned(&'static str),
 }
 
+/// A driver: what it handles, and how to start it on a device.
 #[derive(Debug)]
 pub struct DriverInfo {
     pub name: &'static str,
@@ -42,9 +51,11 @@ pub struct DriverInfo {
     pub probe: fn(&'static Device) -> Result<(), ProbeError>,
 }
 
+/// Why a driver did not bind to a device.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProbeError {
-    /// Waiting for dependency
+    /// Something this driver needs has not been probed yet (a clock
+    /// controller, say). The device is tried again once something else bound.
     Defer,
     /// The device lacks a resource the driver needs.
     MissingResource,

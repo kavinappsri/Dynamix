@@ -20,4 +20,5 @@ pub mod acpi;
 pub mod klog;
 pub mod device;
 pub mod registry;
+pub mod provider;
 

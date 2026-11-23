@@ -1,10 +1,15 @@
-//! A list of things needed for rest of kernel lifetime
+//! Append-only lists of things that live for the rest of the boot.
 //!
-//! it's currently a place for device drivers and such, since there is no unloading of drivers yet.
+//! Devices and the instances drivers create are never removed (there is no
+//! unbinding yet), so a list is just nodes that are allocated once, leaked, and
+//! linked in at the tail. Readers walk it without locks and without
+//! allocating, which is what the panic and fault paths need from the console.
+//! Adding needs the heap, so drivers can only register once it is up.
 
 use alloc::boxed::Box;
 use core::ptr;
 use core::sync::atomic::{AtomicPtr, Ordering};
+
 use crate::services::device::Device;
 
 struct Node<T: 'static> {
@@ -12,6 +17,7 @@ struct Node<T: 'static> {
     next: AtomicPtr<Node<T>>,
 }
 
+/// A list that only ever grows. Iteration order is insertion order.
 pub struct AppendList<T: 'static> {
     head: AtomicPtr<Node<T>>,
 }
@@ -21,15 +27,16 @@ impl<T: 'static> AppendList<T> {
         Self { head: AtomicPtr::new(ptr::null_mut()) }
     }
 
-    /// Adds `value` to the end of the [`AppendList`], and return a reference
+    /// Adds `value` at the end and returns a reference that stays valid forever.
     pub fn push(&self, value: T) -> &'static T {
-        let node = Box::into_raw(Box::new(Node {value, next: AtomicPtr::new(ptr::null_mut())} ));
+        let node = Box::into_raw(Box::new(Node { value, next: AtomicPtr::new(ptr::null_mut()) }));
 
         let mut link = &self.head;
         loop {
-            // SAFETY: node was leaked above, and will never be freed.
             match link.compare_exchange(ptr::null_mut(), node, Ordering::AcqRel, Ordering::Acquire) {
+                // SAFETY: `node` was leaked just above and is never freed.
                 Ok(_) => return unsafe { &(*node).value },
+                // SAFETY: a non-null link points at a leaked node.
                 Err(existing) => link = unsafe { &(*existing).next },
             }
         }
@@ -69,9 +76,8 @@ impl<T: 'static> Iterator for Iter<T> {
         if self.next.is_null() {
             return None;
         }
-
-        // SAFETY: next is not null, leaked value
-        let node = unsafe { &(*self.next) };
+        // SAFETY: non-null links point at leaked, fully initialized nodes.
+        let node = unsafe { &*self.next };
         self.next = node.next.load(Ordering::Acquire);
         Some(&node.value)
     }
@@ -83,14 +89,17 @@ pub struct Entry<T: ?Sized + 'static> {
     pub handle: &'static T,
 }
 
-/// Every instance of one kind of driver
+/// Every instance of one kind of driver (all the serial ports, all the
+/// displays, ...), in the order they were bound.
 pub struct Class<T: ?Sized + 'static> {
     list: AppendList<Entry<T>>,
+    /// The instance firmware says to use, if it said.
+    preferred: AtomicPtr<Entry<T>>,
 }
 
 impl<T: ?Sized + 'static> Class<T> {
     pub const fn new() -> Self {
-        Self { list: AppendList::new() }
+        Self { list: AppendList::new(), preferred: AtomicPtr::new(ptr::null_mut()) }
     }
 
     pub fn register(&self, device: &'static Device, handle: &'static T) {
@@ -101,10 +110,21 @@ impl<T: ?Sized + 'static> Class<T> {
         self.list.iter()
     }
 
-    /// The first instance that was bound: what the kernel uses unless it has
-    /// a reason to pick another.
+    /// The instance the kernel uses: the one firmware [preferred](Self::prefer)
+    /// if it named one, else the first that was bound.
     pub fn primary(&self) -> Option<&'static T> {
+        let preferred = self.preferred.load(Ordering::Acquire);
+        if !preferred.is_null() {
+            // SAFETY: only `prefer` stores here, and only a reference to a
+            // list entry, which is never freed.
+            return Some(unsafe { (*preferred).handle });
+        }
         self.list.first().map(|entry| entry.handle)
+    }
+
+    /// Makes `entry`, which must come from this class, the primary instance.
+    pub fn prefer(&self, entry: &'static Entry<T>) {
+        self.preferred.store(ptr::from_ref(entry).cast_mut(), Ordering::Release);
     }
 }
 

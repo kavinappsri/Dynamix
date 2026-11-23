@@ -4,8 +4,10 @@
 //! one integer. Decoding the whole zoo of AML result types would
 //! go here too when we need it.
 
+use alloc::vec::Vec;
 use core::mem::{MaybeUninit, size_of};
-use core::ptr;
+use core::ptr::{self, NonNull};
+use core::slice;
 
 use acpica_sys as sys;
 
@@ -49,5 +51,64 @@ impl Device {
         // SAFETY: the typed evaluation succeeded, so ACPICA wrote an
         // integer object.
         Ok(unsafe { (*object.as_ptr()).Integer.Value })
+    }
+
+    ///  the entries of `_DEP` that are device references
+    /// `NotFound` if the device has no `_DEP`.
+    ///
+    /// Runs AML.
+    pub fn dependencies(&self) -> Result<Vec<Device>, AcpiError> {
+        let name = c_name::<32>("_DEP")?;
+        // ACPICA allocates a buffer of the right size when the length is -1.
+        let mut buffer = sys::ACPI_BUFFER { Length: usize::MAX as _, Pointer: ptr::null_mut() };
+
+        // SAFETY: valid handle and NUL-terminated name; ACPICA fills in `buffer`.
+        check(unsafe {
+            sys::AcpiEvaluateObjectTyped(
+                self.handle.as_ptr(),
+                name.as_ptr().cast_mut().cast(),
+                ptr::null_mut(),
+                &mut buffer,
+                sys::ACPI_TYPE_PACKAGE,
+            )
+        })?;
+        let result = ReturnBuffer(NonNull::new(buffer.Pointer).ok_or(AcpiError::NotFound)?);
+
+        // SAFETY: the typed evaluation succeeded, so the buffer holds a
+        // package object whose `Count` elements follow it in the same
+        // allocation, which `result` keeps alive.
+        let elements = unsafe {
+            let package = (*result.0.as_ptr().cast::<sys::ACPI_OBJECT>()).Package;
+            if package.Elements.is_null() {
+                &[][..]
+            } else {
+                slice::from_raw_parts(package.Elements, package.Count as usize)
+            }
+        };
+
+        let mut devices = Vec::new();
+        for element in elements {
+            // SAFETY: `Type` is the tag every variant of the union starts with.
+            if unsafe { element.Type } != sys::ACPI_TYPE_LOCAL_REFERENCE {
+                continue;
+            }
+            // SAFETY: it is a reference, so `Reference` is the live variant.
+            let handle = unsafe { element.Reference.Handle };
+            if let Some(handle) = NonNull::new(handle) {
+                devices.try_reserve(1).map_err(|_| AcpiError::NoMemory)?;
+                devices.push(Device { handle });
+            }
+        }
+        Ok(devices)
+    }
+}
+
+/// A result buffer ACPICA allocated for us, freed on drop.
+struct ReturnBuffer(NonNull<core::ffi::c_void>);
+
+impl Drop for ReturnBuffer {
+    fn drop(&mut self) {
+        // SAFETY: allocated by ACPICA through `AcpiOsAllocate`, freed once.
+        unsafe { crate::services::acpica_osl::AcpiOsFree(self.0.as_ptr().cast()) };
     }
 }

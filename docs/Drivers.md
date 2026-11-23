@@ -1,205 +1,178 @@
-# How To Write Drivers
+# The Driver System
 
-There's no point in me beating around the bush if you're in this far. I'll just get straight to the point. 
+This doc should be able to give you a brief overview of how the driver system generally works, and how you can write your
+own drivers. Do keep in mind that this doc may be outdated, so your best resource should always be the source code. 
 
-Here, were just gonna write a simple Serial driver. hopefully that teaches you enough system so that you can look at the 
-code and figure the rest out yourself. 
+## How it works
 
-Keep in mind that this file may be outdated, So your best information source
-should be the source code. For the record, when I'm typing this, its October 20, 2026. 
+When the driver system starts (`hal::services::device::init`), The first thing it does is enumerate all the devices present.
+The exact way it does this depends on whether it's loaded with the ACPI tables or the FDT, but for either case, it constructs
+a `Device` for each device and appends it to a global registry of items. 
 
-## The 3 things
+The system then 'probes' i.e. starts matching the drivers and calling their `probe` function. the `probe` function essentially
+initializes your driver and device. Once that is done, it does a few checks on what is the default device, then it hands 
+control back to the kernel.
 
-There's mainly 3 things you have to do when writing a Serial driver
+## Writing drivers
 
-1. Implement the `Serial` trait
-2. Define the `init` function
-3. Call the `register_driver` macro
-
-So lets start writing a driver. when you write one, you'd want to make it sit inside `hal/src/drivers`. Anywhere inside
-that folder is fine, the only condition is it has to be accessible by the outside crate, so make sure you write your `mod.rs`
-properly
-
-Let's start by making a simple struct for our driver. Let's take our target device to be a simple memory mapped UART
-
-```rust
-pub struct MySerialDriver {
-    base_register: usize,
-}
-
-impl MySerialDriver {
-    pub fn new(base: usize) -> Self {
-        Self {
-            base_register: base,
-        }
-    }
-}
-```
-
-The crate gives us a handy struct for memory mapped i/o, which we can use
+Now, we're going to learn by actually writing a driver. Let's say ... for a UART, which has a write offset as `0x0` and a 
+read offset at `0x08`. 
 
 ```rust
 use crate::services::mmio::Mmio;
 
-pub struct MySerialDriver {
-    base: Mmio,
+pub struct MyUartDriver {
+    regs: Mmio,
 }
 
-impl MySerialDriver {
-    pub unsafe fn new(base: usize) -> Self {
-        Self {
-            base: unsafe{ Mmio::new(base) },
-        }
-    }
-}
-```
-
-Let's say our UART has a write line at offset `0x00` and a read line offset at `0x08`
-
-```rust
-use crate::services::mmio::Mmio;
-
-pub struct MySerialDriver {
-    base: Mmio,
-}
-
-impl MySerialDriver {
+impl MyUartDriver {
     const WRITE: usize = 0x00;
     const READ: usize = 0x08;
-    
-    pub unsafe fn new(base: usize) -> Self {
-        Self {
-            base: unsafe{ Mmio::new(base) },
-        }
+
+    pub const fn new(regs: Mmio) -> Self {
+        Self { regs }
     }
 }
 ```
-Now, we can implement the `Serial` Trait
+
+That was quick, wasn't it? What we basically have here is a struct for our driver. A driver must be a struct, or else 
+it wouldn't be possible to create multiple instances of it. 
+
+[`Mmio`](/hal/src/services/mmio.rs) is basically a struct for writing/reading values at an offset from a certain base. You
+aren't required to use it, you could have had `base: usize` instead of `regs: Mmio`, its just that `Mmio` makes things easier.
+
+Now, UART drivers can be used directly by the kernel, so we have to implement a trait for the kernel to communicate with
+the driver. For a uart, this trait it [`Serial`](/hal/src/driver_traits/serial.rs)
+
 ```rust
 use crate::services::mmio::Mmio;
-use crate::{Serial};
+use crate::driver_traits::serial::Serial;
 
-pub struct MySerialDriver {
-    base: Mmio,
+pub struct MyUartDriver {
+    regs: Mmio,
 }
 
-impl MySerialDriver {
+impl MyUartDriver {
     const WRITE: usize = 0x00;
     const READ: usize = 0x08;
-    
-    pub unsafe fn new(base: usize) -> Self {
-        Self {
-            base: unsafe{ Mmio::new(base) },
-        }
+
+    pub const fn new(regs: Mmio) -> Self {
+        Self { regs }
     }
 }
 
-impl Serial for MySerialDriver {
+impl Serial for MyUartDriver {
     fn write_byte(&self, byte: u8) {
-        self.base.write32(Self::WRITE, u32::from(byte));
+        self.regs.write32(Self::WRITE, u32::from(byte));
     }
     fn read_byte(&self) -> u8 {
-        self.base.read32(Self::READ) as u8
+        self.regs.read32(Self::READ) as u8
     }
 }
 ```
-Now, we must create our init function. the purpose of this is to have a globally accessible place for our driver using 
-a custom cell called a `StaticCell`. The function signature must take in `DeviceResource` 
-and a `DeviceQuery` and return a `Result<'static dyn Serial, DriverProbeError>`
+
+Finally, we need to register our driver with the kernel, and the driver system. To do this, we define a `probe`, where we 
+register our driver, and then pass the probe and our compatible matches to the kernel via the `driver!` macro.
 
 ```rust
 use crate::services::mmio::Mmio;
-use crate::{Serial};
-use crate::services::device_query::DeviceResource;
-use crate::services::device_query::DeviceQuery;
-use crate::driver_traits::driver::{Driver, DriverProbeError};
-use crate::services::sync::StaticCell;
+use crate::services::device::Device;
+use crate::driver_traits::serial::Serial;
+use crate::driver_traits::driver::{Match, ProbeError};
 
-pub struct MySerialDriver {
-    base: Mmio,
+pub struct MyUartDriver {
+    regs: Mmio,
 }
 
-impl MySerialDriver {
+impl MyUartDriver {
     const WRITE: usize = 0x00;
     const READ: usize = 0x08;
-    
-    pub unsafe fn new(base: usize) -> Self {
-        Self {
-            base: unsafe{ Mmio::new(base) },
-        }
+
+    pub const fn new(regs: Mmio) -> Self {
+        Self { regs }
     }
 }
 
-impl Serial for MySerialDriver {
+impl Serial for MyUartDriver {
     fn write_byte(&self, byte: u8) {
-        self.base.write32(Self::WRITE, u32::from(byte));
+        self.regs.write32(Self::WRITE, u32::from(byte));
     }
     fn read_byte(&self) -> u8 {
-        self.base.read32(Self::READ) as u8
+        self.regs.read32(Self::READ) as u8
     }
 }
 
-fn init(resource: DeviceResource, _query: &dyn DeviceQuery) -> Result<&'static dyn Serial, DriverProbeError> {
-    let base = resource.mmio_base().ok_or(DriverProbeError::WrongResource)?;
-    static INSTANCE: StaticCell<MySerialDriver> = StaticCell::uninit();
-    Ok(INSTANCE.get_or_init(|| {
-        unsafe {MySerialDriver::new(base)}
-    }))
+fn probe(dev: &'static Device) -> Result<(), ProbeError> {
+    // The first register window of the device, mapped as device memory.
+    let registers = dev.mem(0)?.mmio();
+    serial::register(dev, MyUartDriver::new(registers));
+    Ok(())
+}
+
+driver! {
+    name: "my-uart",
+    matches: [Match::Fdt("my,uart"), Match::Fdt("my,uart-v2")],
+    probe: probe,
 }
 ```
 
-Now, we simply call the `register_driver` macro. This will link the driver into the binary
+Here, `Match` is against what you are matching your string, i.e. ACPI device, FDT compatible, etc. `ProbeError` is what 
+error, if any, your driver returns. There is a couple you can choose from, like `NotPresent` if your device isn't even there,
+`Defer` if your waiting for a dependency driver (`Defer` will cause your probe to be run again after some time), `InitFailed`
+for a failed device initialization, etc.
+
+## A few special cases
+
+### Provider drivers
+
+If your writing a driver that will never be directly used by the kernel, only by other drivers (i.e. for some device
+only on a specific family of SoC) you are writing a provider driver, you can just simply not implement any trait for your 
+struct, register it with `provider::register(...)` in the probe instead.
+
+If your using a provider driver, you have to first get the `Device`, then you have to do `provider::get()` on the device
+to get your dependency driver (Note that `get()` returns a `Result<&'static T, ProbeError>`, and you are responsible
+for handling that). You have a few different ways of getting the device
+
+* device tree: `dev.fdt_link(&FdtLink::CLOCKS, "name")` follows `clocks` / `clock-names` (also
+  `FdtLink::POWER_DOMAINS`, or `FdtLink::new(..)` for any other `<phandle cells...>` list);
+* ACPI: `dev.acpi_dependency(i)` is the `i`th entry of the device's `_DEP`;
+* a device spawned by another driver (below): `dev.parent()`.
 
 ```rust
-use crate::services::mmio::Mmio;
-use crate::{Serial};
-use crate::services::device_query::DeviceResource;
-use crate::services::device_query::DeviceQuery;
-use crate::driver_traits::driver::{Driver, DriverProbeError};
-use crate::services::sync::StaticCell;
-use crate::register_driver;
+use crate::services::device::Device;
 
-pub struct MySerialDriver {
-    base: Mmio,
+pub fn probe(dev: &'static Device) -> Result<(), ProbeError> {
+    // the clock controller's probe
+    provider::register(dev, Rk3126Cru::new(regs));
+
+    // the display driver's probe
+    let cru_device = dev.fdt_link(&FdtLink::CLOCKS, "dclk_lcdc")?;   // which device? (firmware says)
+    let cru: &Rk3126Cru = provider::get(cru_device)?;                // what does it offer? (by type)
+    cru.enable(Rk3126Clock::DclkVop)?;
 }
-
-impl MySerialDriver {
-    const WRITE: usize = 0x00;
-    const READ: usize = 0x08;
-    
-    pub unsafe fn new(base: usize) -> Self {
-        Self {
-            base: unsafe{ Mmio::new(base) },
-        }
-    }
-}
-
-impl Serial for MySerialDriver {
-    fn write_byte(&self, byte: u8) {
-        self.base.write32(Self::WRITE, u32::from(byte));
-    }
-    fn read_byte(&self) -> u8 {
-        self.base.read32(Self::READ) as u8
-    }
-}
-
-fn init(resource: DeviceResource, _query: &dyn DeviceQuery) -> Result<&'static dyn Serial, DriverProbeError> {
-    let base = resource.mmio_base().ok_or(DriverProbeError::WrongResource)?;
-    static INSTANCE: StaticCell<MySerialDriver> = StaticCell::uninit();
-    Ok(INSTANCE.get_or_init(|| {
-        unsafe {MySerialDriver::new(base)}
-    }))
-}
-
-register_driver!(MY_UART, "my_uart_fdt_compatible_string", init, Serial);
 ```
 
-Now that was a lot, and it went by rather fast. Now, that's probably because I used a bunch of traits and structs without stopping 
-to really explain what they are. So i'll finish this off by Giving you links to the source code itself, so you can look at it!
+### My driver isn't listed!
 
-[Driver](/hal/src/driver_traits/driver.rs)
+More often than not, you have a device that isn't listed in FDT/ACPI. Now, for your driver to load, either your consumer
+driver or provider driver, can announce a new device with `dev.spawn(name, &[ids], &[resources])`. The new device goes 
+through the usual probing, so its driver is an ordinary `driver!` that matches `Match::Spawned("id")`. It can reach whoever
+announced it with `dev.parent()`.
 
-[DeviceResource and DeviceQuery](/hal/src/services/device_query.rs)
+## And so now you know
+
+Yay! You've figured out how the driver system works!
+
+But have you? As I said, this file may very well be outdated, so you could have been learning the driver system from a hundred
+years ago. There's only one way to find out. Off you go to the source files!
+
+[Driver table and `driver!`](/hal/src/driver_traits/driver.rs)
+
+[Device, resources and probing](/hal/src/services/device/mod.rs)
+
+[Class registries](/hal/src/services/registry.rs)
+
+[Device tree walker](/hal/src/services/dtb.rs)
 
 [Mmio](/hal/src/services/mmio.rs)
 
@@ -208,5 +181,4 @@ to really explain what they are. So i'll finish this off by Giving you links to 
 [Serial](/hal/src/driver_traits/serial.rs)
 
 [Example Drivers](/hal/src/drivers/mod.rs)
-
 

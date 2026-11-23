@@ -4,12 +4,18 @@
 //! this does not use a usual "read-modify-write" cycle, instead using the upper 16 bits of a
 //! 32 bit write as a write mask
 
-use crate::driver_traits::clocks::{ClockController, ClockError};
 use crate::driver;
-use crate::driver_traits::clocks;
 use crate::driver_traits::driver::{Match, ProbeError};
 use crate::services::device::Device;
 use crate::services::mmio::Mmio;
+use crate::services::provider;
+
+/// Why a clock request failed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClockError {
+    UnreachableRate,
+    ParentUnavailable,
+}
 
 const OSC_HZ: u32 = 24_000_000;
 
@@ -90,24 +96,9 @@ pub enum Rk3126Clock {
     HclkLcdc0 = 2,
 }
 
-impl TryFrom<u32> for Rk3126Clock {
-    type Error = ClockError;
-
-    fn try_from(value: u32) -> Result<Self, ClockError> {
-        match value {
-            0 => Ok(Self::DclkVop),
-            1 => Ok(Self::AclkLcdc0),
-            2 => Ok(Self::HclkLcdc0),
-            _ => Err(ClockError::UnknownClock),
-        }
-    }
-}
-
 pub struct Rk3126Cru {
     regs: Mmio,
 }
-
-unsafe impl Sync for Rk3126Cru {}
 
 impl Rk3126Cru {
     fn new(regs: Mmio) -> Self {
@@ -214,9 +205,9 @@ impl Rk3126Cru {
     }
 }
 
-impl ClockController for Rk3126Cru {
-    fn enable(&self, clock: u32) -> Result<(), ClockError> {
-        let clock = Rk3126Clock::try_from(clock)?;
+impl Rk3126Cru {
+    /// Ungates `clock`.
+    pub fn enable(&self, clock: Rk3126Clock) -> Result<(), ClockError> {
         match clock {
             Rk3126Clock::DclkVop => {
                 // GFLAGS on this family is CLK_GATE_SET_TO_DISABLE: 0 ungates.
@@ -232,8 +223,8 @@ impl ClockController for Rk3126Cru {
         Ok(())
     }
 
-    fn disable(&self, clock: u32) -> Result<(), ClockError> {
-        let clock = Rk3126Clock::try_from(clock)?;
+    /// Gates `clock`.
+    pub fn disable(&self, clock: Rk3126Clock) -> Result<(), ClockError> {
         match clock {
             Rk3126Clock::DclkVop => {
                 self.write_masked(dclk_vop::GATE_CON, dclk_vop::GATE_BIT, 0x1, 1);
@@ -248,8 +239,9 @@ impl ClockController for Rk3126Cru {
         Ok(())
     }
 
-    fn set_rate(&self, clock: u32, hz: u32) -> Result<u32, ClockError> {
-        let clock = Rk3126Clock::try_from(clock)?;
+    /// Selects a divider so that `clock` runs as close to `hz` as the
+    /// hardware allows it. Returns the rate actually reached.
+    pub fn set_rate(&self, clock: Rk3126Clock, hz: u32) -> Result<u32, ClockError> {
         match clock {
             Rk3126Clock::DclkVop => {
                 if hz == 0 {
@@ -278,8 +270,8 @@ impl ClockController for Rk3126Cru {
         }
     }
 
-    fn get_rate(&self, clock: u32) -> Result<u32, ClockError> {
-        let clock = Rk3126Clock::try_from(clock)?;
+    /// The rate `clock` runs at now.
+    pub fn get_rate(&self, clock: Rk3126Clock) -> Result<u32, ClockError> {
         match clock {
             Rk3126Clock::DclkVop => {
                 let con = self.regs.read32(dclk_vop::SEL_CON);
@@ -302,7 +294,7 @@ impl ClockController for Rk3126Cru {
 
 fn probe(dev: &'static Device) -> Result<(), ProbeError> {
     let regs = dev.mem(0)?.mmio();
-    clocks::register(dev, Rk3126Cru::new(regs));
+    provider::register(dev, Rk3126Cru::new(regs));
     Ok(())
 }
 

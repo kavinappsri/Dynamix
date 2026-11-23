@@ -195,7 +195,7 @@ impl InterruptController for GicV2 {
     }
 
     fn software_irq(&self, n: u8) -> Option<Irq> {
-        ((n as u32) < SGI_COUNT).then(|| Irq(n as u32))
+        ((n as u32) < SGI_COUNT).then_some(Irq(n as u32))
     }
 
     fn raise_self(&self, irq: Irq) -> Result<(), IrqError> {

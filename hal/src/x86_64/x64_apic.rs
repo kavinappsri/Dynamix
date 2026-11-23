@@ -381,9 +381,9 @@ fn cpu_has_apic() -> bool {
     leaf.edx & (1 << 9) != 0
 }
 
-/// Finds the APICs through the ACPI MADT, parks the legacy PIC, maps and
-/// masks every I/O APIC pin, and returns the controller.
-fn init() -> Result<&'static dyn InterruptController, IrqError> {
+/// Finds the APICs through the ACPI MADT, parks the legacy PIC, masks every
+/// I/O APIC pin (their windows come from `dev`), and returns the controller.
+fn init(dev: &Device) -> Result<&'static dyn InterruptController, IrqError> {
     if !cpu_has_apic() {
         return Err(IrqError::NoController);
     }
@@ -435,9 +435,8 @@ fn init() -> Result<&'static dyn InterruptController, IrqError> {
     let mut ioapics = [None::<IoApic>; MAX_IOAPICS];
     for (slot, found) in ioapics.iter_mut().zip(io_found.iter()) {
         let Some((address, gsi_base)) = *found else { continue };
-        mmu::map_device(PhysRange::new(PhysAddr::new(address as usize), 0x1000)).map_err(|_| IrqError::InitFailed)?;
-        // SAFETY: just mapped as device memory.
-        let mmio = unsafe { Mmio::new(address as usize) };
+        // The device lists the window of every I/O APIC the MADT does.
+        let mmio = dev.mem_at(address as usize).map_err(|_| IrqError::InitFailed)?.mmio();
         let mut io = IoApic { mmio, gsi_base, entries: 0 };
         io.entries = ((io.read(IOAPIC_VER) >> 16) & 0xFF) + 1;
 
@@ -475,7 +474,7 @@ fn init() -> Result<&'static dyn InterruptController, IrqError> {
 /// driver covers what lives in them: the interrupt controllers, and the
 /// local APIC's timer.
 fn probe(dev: &'static Device) -> Result<(), ProbeError> {
-    let controller = init().map_err(|error| match error {
+    let controller = init(dev).map_err(|error| match error {
         IrqError::NoController => ProbeError::NotPresent,
         _ => ProbeError::InitFailed,
     })?;

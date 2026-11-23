@@ -109,6 +109,12 @@ impl Acpi {
         Madt::get()
     }
 
+    /// The serial port the firmware uses as its console, from the SPCR.
+    /// `NotFound` if the machine has no such table.
+    pub fn console_serial(&self) -> Result<super::SerialAddress, AcpiError> {
+        super::spcr::console_serial()
+    }
+
     /// The EC
     pub fn embedded_controller(&self) -> Option<&'static EmbeddedController> {
         super::ec::get()

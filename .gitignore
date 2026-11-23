@@ -33,3 +33,4 @@ ovmf/
 
 
 /Cargo.lock
+/scripts/spcr.aml
