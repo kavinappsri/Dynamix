@@ -39,7 +39,7 @@ pub fn run(console: &mut Console, display: Option<&dyn Framebuffer>) -> ! {
         // `continue`, and a stale half-typed line must not leak into the next one.
         input_buffer.clear();
 
-        console.write("dynamix <~ ");
+        console.write("[#] -> ");
         console.read_line(&mut input_buffer);
         console.writeln("");
 

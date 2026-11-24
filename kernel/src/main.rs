@@ -7,6 +7,8 @@ extern crate alloc;
 
 /// Byte streams (UART, screen, ...) that the console reads from and writes to.
 pub mod io;
+/// Keyboard input as a byte stream.
+pub mod keyboard;
 /// Line-oriented console over an input stream and an output stream.
 pub mod console;
 /// Embedded boot-logo rendering.
@@ -31,7 +33,8 @@ use hal::services::boot_info::BootInfo;
 use hal::services::cpu;
 use selftest::{heap_test, irq_test, time_test, work_test};
 
-use crate::io::{Broadcast, OutputStream, SerialStream, StreamWriter};
+use crate::io::{Broadcast, InputStream, OutputStream, SerialStream, StreamWriter};
+use crate::keyboard::KeyboardStream;
 use crate::text_display::TextDisplay;
 
 /// Every panic ends up in the HAL's fault reporter, which prints the same
@@ -147,22 +150,23 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
         report_selftest(&mut log, "Timer", time_test::run());
     }
 
-    // Interrupt controller, bound with the rest of the devices above
-    match hal::services::interrupts::init() {
-        Ok(()) => {
-            if DEV_IRQ_SELFTEST {
-                report_selftest(&mut log, "Interrupt", irq_test::run());
-            }
+    // The interrupt controller was bound with the rest of the devices above,
+    // and the interrupt service started as soon as it was (drivers that use an
+    // interrupt, like the keyboard's, needed it during their probe).
+    if hal::services::interrupts::is_ready() {
+        let _ = writeln!(log, "[+] Interrupt controller ready");
+        if DEV_IRQ_SELFTEST {
+            report_selftest(&mut log, "Interrupt", irq_test::run());
         }
-        Err(err) => {
-            let _ = writeln!(log, "[!] No interrupt controller: {:?}", err);
-        }
+    } else {
+        let _ = writeln!(log, "[!] No interrupt controller");
     }
 
     if DEV_WORK_SELFTEST {
         report_selftest(&mut log, "Work queue", work_test::run());
     }
 
+    #[allow(clippy::collapsible_if)] //false positive
     if let Some(hardware) = hardware {
         if let Err(err) = hardware.enable() {
             let _ = writeln!(log, "[!] Hardware description enable failed: {}", err);
@@ -189,10 +193,16 @@ pub fn rust_main(boot_info: &'static mut BootInfo<'static>) -> ! {
         hal::services::power::system_off();
     }
 
-    // The shell reads from the serial port; the display, if there is one, only
-    // serves its `fill` command (its text output already comes through `output`).
-    // Other input devices, a keyboard say, would go here as an `InputStream`.
-    if let Some(input) = &uart {
+    // The shell reads from the keyboard if there is one, else from the serial
+    // port.
+    let keyboard = hal::driver_traits::keyboard::primary_keyboard().map(KeyboardStream::new);
+    let input: Option<&dyn InputStream> = match (&keyboard, &uart) {
+        (Some(keyboard), _) => Some(keyboard),
+        (None, Some(uart)) => Some(uart),
+        (None, None) => None,
+    };
+    if let Some(input) = input {
+        let _ = writeln!(log, "[+] Shell input: {}", if keyboard.is_some() { "keyboard" } else { "serial port" });
         let mut console = console::Console::new(input, &output);
         console.writeln("Dynamix active");
 

@@ -8,10 +8,12 @@ use crate::driver_traits::serial::active_serial;
 use crate::services::{cpu, exceptions};
 
 /// Frames printed at most, including the faulting `pc`.
+#[allow(dead_code)] //only used on ARM
 const MAX_FRAMES: usize = 24;
 
 /// How far above the faulting stack pointer a frame record may be before the
 /// walk gives up
+#[allow(dead_code)] //only used on ARM
 const MAX_STACK_SPAN: usize = 256 * 1024;
 
 /// A code address is only believed if it lies this close to the kernel image
@@ -215,7 +217,7 @@ fn walk_frame_chain(out: &mut Out, report: &FaultReport<'_>, mut n: usize) {
     let mut first = true;
     while n < MAX_FRAMES {
         let plausible = fp != 0
-            && fp % word == 0
+            && fp.is_multiple_of(word)
             && fp.saturating_add(0x1000) >= report.stack_hint
             && fp.saturating_sub(report.stack_hint) <= MAX_STACK_SPAN;
         if !plausible {

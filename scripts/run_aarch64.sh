@@ -9,6 +9,7 @@ qemu-system-aarch64 \
   -machine virt \
   -cpu cortex-a72 \
   -device ramfb \
+  -device virtio-keyboard-device \
   -serial stdio \
   -monitor none \
   -d "${QEMU_DEBUG:-int,guest_errors}" \

@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 
 use super::{Device, Origin, State};
 use crate::driver_traits::driver::{self, DriverInfo, Match, ProbeError};
+use crate::services::interrupts::{self, IrqError};
 use crate::services::klog::{self, Level, Source};
 
 /// What [`super::init`] managed.
@@ -95,6 +96,19 @@ pub(super) fn probe_all() -> Report {
                 progress |= attempt(device, table);
             }
         }
+
+        if !interrupts::is_ready() {
+            match interrupts::init() {
+                Ok(()) => progress = true,
+                Err(IrqError::NoController) => {}
+                Err(error) => klog::log(
+                    Source::Kernel,
+                    Level::Warn,
+                    format_args!("interrupt controller did not start: {:?}", error),
+                ),
+            }
+        }
+
         if !progress {
             break;
         }

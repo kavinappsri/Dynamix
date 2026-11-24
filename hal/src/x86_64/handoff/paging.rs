@@ -74,6 +74,9 @@ pub unsafe fn prepare() -> Result<Prepared, PagingError> {
 
 /// Loads the prepared tables, relocates the image to the higher half and
 /// continues in `entry` on the higher-half boot stack.
+///
+/// # Safety
+/// See function definition
 pub unsafe fn activate(prepared: Prepared, entry: HigherHalfEntry) -> ! {
     let image = prepared.image;
     let delta = KERNEL_VIRT_BASE.wrapping_sub(image.base);

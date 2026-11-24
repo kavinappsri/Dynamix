@@ -9,6 +9,7 @@ qemu-system-arm \
   -machine virt \
   -cpu cortex-a7 \
   -device ramfb \
+  -device virtio-keyboard-device \
   -serial stdio \
   -monitor none \
   -d "${QEMU_DEBUG:-int,guest_errors}" \

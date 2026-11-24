@@ -103,7 +103,7 @@ impl MemoryMap {
     }
 
     pub fn len(&self) -> usize {
-        if self.descriptor_size == 0 { 0 } else { self.map_size / self.descriptor_size }
+        self.map_size.checked_div(self.descriptor_size).unwrap_or(0)
     }
 
     pub fn is_empty(&self) -> bool {

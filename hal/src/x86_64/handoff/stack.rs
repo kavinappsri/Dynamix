@@ -25,6 +25,9 @@ pub fn stack_top() -> usize {
 pub type StackEntry = unsafe extern "efiapi" fn(*mut BootInfo<'static>) -> !;
 
 /// Points `rsp` at `top` and calls `entry(arg)` there.
+///
+/// # Safety
+/// See function definition
 pub unsafe fn call_on_stack(top: usize, entry: usize, arg: usize) -> ! {
     unsafe {
         asm!(
@@ -42,6 +45,9 @@ pub unsafe fn call_on_stack(top: usize, entry: usize, arg: usize) -> ! {
 }
 
 /// Switches to the boot stack and calls `entry(arg)` on it.
+///
+/// # Safety
+/// See function definition
 pub unsafe fn switch_and_call(arg: *mut BootInfo<'static>, entry: StackEntry) -> ! {
     unsafe { call_on_stack(stack_top(), entry as usize, arg as usize) }
 }

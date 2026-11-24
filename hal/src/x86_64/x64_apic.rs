@@ -377,7 +377,7 @@ fn disable_legacy_pic() {
 
 fn cpu_has_apic() -> bool {
     // SAFETY: CPUID leaf 1 exists on every x86_64 CPU.
-    let leaf = unsafe { core::arch::x86_64::__cpuid(1) };
+    let leaf = core::arch::x86_64::__cpuid(1);
     leaf.edx & (1 << 9) != 0
 }
 

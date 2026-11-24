@@ -11,11 +11,9 @@ use alloc::boxed::Box;
 use core::alloc::Layout;
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
-use core::fmt::Write;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use crate::services::klog::{Source, Level, self};
-use crate::driver_traits::serial::{SerialWriter, active_serial};
 use crate::services::addr::{PhysAddr, PhysRange};
 use crate::services::cpu::{self, IrqState};
 use crate::services::interrupts::{self, Irq, IrqConfig, IrqHandle, IrqStatus, Polarity, Trigger};
@@ -104,6 +102,9 @@ pub extern "C" fn AcpiOsGetRootPointer() -> u64 {
 }
 
 /// No predefined-name overrides.
+///
+/// # Safety
+/// In function definition
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn AcpiOsPredefinedOverride(_init_val: *const c_void, new_val: *mut *mut u8) -> AcpiStatus {
     if !new_val.is_null() {
@@ -114,6 +115,9 @@ pub unsafe extern "C" fn AcpiOsPredefinedOverride(_init_val: *const c_void, new_
 }
 
 /// No table overrides.
+///
+/// # Safety
+/// In function definition
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn AcpiOsTableOverride(_existing: *mut c_void, new_table: *mut *mut c_void) -> AcpiStatus {
     if !new_table.is_null() {
@@ -171,19 +175,24 @@ unsafe fn allocate(size: u64, zeroed: bool) -> *mut c_void {
         base.add(ALLOC_HEADER) as *mut c_void
     }
 }
-
+/// # Safety
+/// In function definition
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn AcpiOsAllocate(size: u64) -> *mut c_void {
     // SAFETY: forwarded contract.
     unsafe { allocate(size, false) }
 }
 
+/// # Safety
+/// In function definition
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn AcpiOsAllocateZeroed(size: u64) -> *mut c_void {
     // SAFETY: forwarded contract.
     unsafe { allocate(size, true) }
 }
 
+/// # Safety
+/// In function definition
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn AcpiOsFree(memory: *mut c_void) {
     if memory.is_null() {
@@ -237,6 +246,8 @@ pub extern "C" fn AcpiOsMapMemory(where_: u64, length: u64) -> *mut c_void {
 #[unsafe(no_mangle)]
 pub extern "C" fn AcpiOsUnmapMemory(_logical_address: *mut c_void, _size: u64) {}
 
+/// # Safety
+/// In function definition
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn AcpiOsGetPhysicalAddress(logical_address: *mut c_void, physical_address: *mut u64) -> AcpiStatus {
     if logical_address.is_null() || physical_address.is_null() {
@@ -257,7 +268,7 @@ fn read_physical(addr: u64, width: u32) -> Result<u64, AcpiStatus> {
     }
     // SAFETY: just mapped; ACPICA only asks for addresses its tables describe.
     let mmio = unsafe { Mmio::new(addr as usize) };
-    Ok(if addr % bytes == 0 {
+    Ok(if addr.is_multiple_of(bytes) {
         match width {
             8 => u64::from(mmio.read8(0)),
             16 => u64::from(mmio.read16(0)),
@@ -280,7 +291,7 @@ fn write_physical(addr: u64, value: u64, width: u32) -> Result<(), AcpiStatus> {
     }
     // SAFETY: see `read_physical`.
     let mmio = unsafe { Mmio::new(addr as usize) };
-    if addr % bytes == 0 {
+    if addr.is_multiple_of(bytes) {
         match width {
             8 => mmio.write8(0, value as u8),
             16 => mmio.write16(0, value as u16),
@@ -295,6 +306,8 @@ fn write_physical(addr: u64, value: u64, width: u32) -> Result<(), AcpiStatus> {
     Ok(())
 }
 
+/// # Safety
+/// see function definition
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn AcpiOsReadMemory(address: u64, value: *mut u64, width: u32) -> AcpiStatus {
     if value.is_null() {
@@ -319,7 +332,8 @@ pub extern "C" fn AcpiOsWriteMemory(address: u64, value: u64, width: u32) -> Acp
 }
 
 // -------------------------------- Port I/O --------------------------------
-
+/// # Safety
+/// see function definition
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn AcpiOsReadPort(address: u64, value: *mut u32, width: u32) -> AcpiStatus {
     if value.is_null() {

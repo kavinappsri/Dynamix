@@ -43,6 +43,9 @@ struct DescriptorTablePointer {
 }
 
 /// Installs the GDT, reloads the segment registers and loads the TSS.
+///
+/// # Safety
+/// See function definition
 pub unsafe fn init() {
     let tss_base = TSS.0.get() as u64;
     let ist_top = IST_STACK.0.get() as u64 + IST_STACK_SIZE as u64;

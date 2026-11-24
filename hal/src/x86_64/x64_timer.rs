@@ -51,7 +51,7 @@ fn calibrate() -> Option<u64> {
 
         // Gate off + speaker off, program channel 2: binary, mode 0, lo/hi byte.
         outb(PORT_B, saved & !(PORT_B_GATE2 | PORT_B_SPEAKER));
-        outb(PIT_COMMAND, 0b10_11_000_0);
+        outb(PIT_COMMAND, 0b10110000);
         outb(PIT_CHANNEL2, (CALIBRATION_COUNT & 0xFF) as u8);
         outb(PIT_CHANNEL2, (CALIBRATION_COUNT >> 8) as u8);
 

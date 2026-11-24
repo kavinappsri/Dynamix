@@ -138,13 +138,12 @@ impl Pmm {
 
     fn alloc(&mut self, order: usize) -> Option<PhysFrame> {
         // Find the smallest available order >= `order` with a free block.
-        let mut found_order = None;
-        for o in order..=MAX_ORDER {
-            if self.free_lists[o].is_some() {
-                found_order = Some(o);
-                break;
-            }
-        }
+        let found_order = self.free_lists
+            .iter()
+            .enumerate()
+            .skip(order)
+            .find_map(|(o, list)| list.is_some().then_some(o));
+
         let found_order = found_order?;
         let block = self.pop_free(found_order)?;
 

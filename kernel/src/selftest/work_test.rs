@@ -1,5 +1,6 @@
 //! Boot-time exercise of the deferred work queue.
 
+use core::ptr::null_mut;
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use hal::services::cpu;
@@ -21,7 +22,7 @@ fn append(ctx: *mut ()) {
 
 /// Submits another item while running, to prove the lock is not held.
 fn chain(_ctx: *mut ()) {
-    let _ = work::submit(chained_tail, 0 as *mut ());
+    let _ = work::submit(chained_tail, null_mut::<()>());
 }
 
 fn chained_tail(_ctx: *mut ()) {
@@ -66,7 +67,7 @@ fn fifo_and_context() -> Result<(), &'static str> {
 }
 
 fn submit_from_item() -> Result<(), &'static str> {
-    work::submit(chain, 0 as *mut ()).map_err(|_| "submit failed")?;
+    work::submit(chain, null_mut::<()>()).map_err(|_| "submit failed")?;
     // Only the item that was waiting runs; the one it queued waits.
     if work::run_pending() != 1 {
         return Err("run_pending ran items submitted during the call");
@@ -83,9 +84,9 @@ fn submit_from_item() -> Result<(), &'static str> {
 fn full_queue() -> Result<(), &'static str> {
     let rejected_before = work::stats().rejected;
     for _ in 0..work::CAPACITY {
-        work::submit(noop, 0 as *mut ()).map_err(|_| "queue filled up early")?;
+        work::submit(noop, null_mut::<()>()).map_err(|_| "queue filled up early")?;
     }
-    if work::submit(noop, 0 as *mut ()) != Err(WorkError::Full) {
+    if work::submit(noop, null_mut::<()>()) != Err(WorkError::Full) {
         return Err("a full queue accepted another item");
     }
     if work::stats().rejected != rejected_before + 1 {

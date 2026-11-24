@@ -21,4 +21,5 @@ pub mod klog;
 pub mod device;
 pub mod registry;
 pub mod provider;
+pub mod queue;
 

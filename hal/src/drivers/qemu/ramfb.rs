@@ -13,8 +13,8 @@ use crate::services::pmm;
 use crate::{Framebuffer, FramebufferError};
 
 const XRGB8888: u32 = 0x3432_5258;
-const WIDTH: usize = 1024;
-const HEIGHT: usize = 600;
+const WIDTH: usize = 1280;
+const HEIGHT: usize = 800;
 const PIXEL_COUNT: usize = WIDTH * HEIGHT;
 
 // Byte-level payload defined by QEMU's `etc/ramfb` fw_cfg file.

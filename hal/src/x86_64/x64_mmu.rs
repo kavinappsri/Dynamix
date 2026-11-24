@@ -431,8 +431,8 @@ pub fn init() -> Result<(), MmuError> {
         return Err(MmuError::AlreadyInitialized);
     }
 
-    // SAFETY: CPUID is always available in long mode.
-    let has_pat = unsafe { core::arch::x86_64::__cpuid(1) }.edx & CPUID_1_EDX_PAT != 0;
+    // `__cpuid` is now safe
+    let has_pat = core::arch::x86_64::__cpuid(1).edx & CPUID_1_EDX_PAT != 0;
     if has_pat {
         // SAFETY: PAT is supported; entry 4 is unused by any existing mapping
         // (all of them use entries 0 and 3).

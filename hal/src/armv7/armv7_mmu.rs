@@ -30,7 +30,7 @@ const L1_ENTRIES: usize = 4096;
 const L2_ENTRIES: usize = 256;
 
 /// L1 section descriptor byte size (short-descriptor format).
-const L1_SECTION_SIZE: u32 = 1 * 1024 * 1024; // 1MB
+const L1_SECTION_SIZE: u32 = 1024 * 1024; // 1MB
 /// L2 small-page descriptor byte size (short-descriptor format).
 const L2_PAGE_SIZE: u32 = 4 * 1024; // 4KB
 
@@ -147,7 +147,7 @@ fn map_range(
 
         let remaining = len - offset;
         let can_use_section =
-            (va % L1_SECTION_SIZE == 0) && (pa % L1_SECTION_SIZE == 0) && (remaining >= L1_SECTION_SIZE);
+            va.is_multiple_of(L1_SECTION_SIZE) && pa.is_multiple_of(L1_SECTION_SIZE) && (remaining >= L1_SECTION_SIZE);
 
         if can_use_section {
             let l1_idx = (va >> 20) as usize;

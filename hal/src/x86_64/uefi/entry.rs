@@ -20,8 +20,11 @@ use crate::x86_64::handoff;
 const GOP_SANITY_COLOR: u32 = 0x00_1E_90_FF;
 
 /// Entry point
+///
+/// # Safety
+/// Firmware gives us a valid ptr to EfiSystemTable, and will live until Boot Services exit
 #[unsafe(no_mangle)]
-pub extern "efiapi" fn efi_main(image_handle: EfiHandle, system_table: *mut EfiSystemTable) -> EfiStatus {
+pub unsafe extern "efiapi" fn efi_main(image_handle: EfiHandle, system_table: *mut EfiSystemTable) -> EfiStatus {
     // SAFETY: firmware hands `efi_main` a valid system table.
     let system_table_ref = unsafe { &*system_table };
     let boot_services = system_table_ref.boot_services;

@@ -80,7 +80,7 @@ impl<'a> Grid<'a> {
             0x08 => self.backspace(),
             b'\t' => loop {
                 self.put_glyph(b' ');
-                if self.col % TAB_WIDTH == 0 {
+                if self.col.is_multiple_of(TAB_WIDTH) {
                     break;
                 }
             },

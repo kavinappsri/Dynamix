@@ -286,7 +286,7 @@ unsafe extern "C" fn space_handler(
     context: *mut c_void,
     _region_context: *mut c_void,
 ) -> sys::ACPI_STATUS {
-    if value.is_null() || context.is_null() || bit_width == 0 || bit_width % 8 != 0 || bit_width > 64 {
+    if value.is_null() || context.is_null() || bit_width == 0 || !bit_width.is_multiple_of(8) || bit_width > 64 {
         return sys::AE_BAD_PARAMETER;
     }
     let bytes = u64::from(bit_width / 8);
@@ -345,6 +345,7 @@ fn events_work(context: *mut ()) {
     let Some(ec) = EC.get() else { return };
     ec.service_events();
 
+    #[allow(clippy::collapsible_if)] // false positive
     if context as usize == WORK_FROM_GPE {
         if let Some(gpe) = ec.gpe {
             // SAFETY: a GPE on the FADT blocks (null device) that ACPICA handed us.

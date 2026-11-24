@@ -146,9 +146,9 @@ pub fn init() {
         }
 
         let first_irq_stub = core::ptr::addr_of!(irq_stub_first) as usize;
-        for vector in FIRST_EXTERNAL_VECTOR as usize..256 {
+        for (vector, gate) in idt.iter_mut().enumerate().skip(FIRST_EXTERNAL_VECTOR as usize) {
             let stub = first_irq_stub + (vector - FIRST_EXTERNAL_VECTOR as usize) * IRQ_STUB_SIZE;
-            idt[vector] = Gate::new(stub as u64, 0);
+            *gate = Gate::new(stub as u64, 0);
         }
 
         let pointer = DescriptorTablePointer {
@@ -198,8 +198,8 @@ impl fmt::Display for Cause<'_> {
                 if e & 1 != 0 { " (external event)" } else { "" },
             ),
             8 => write!(f, "a fault occurred while delivering another one (often a stack overflow), error code {:#x}", e),
-            // Only these vectors push an error code; for the rest the field is just 0.
-            8 | 10..=14 | 17 | 21 | 29 | 30 => write!(f, "error code {:#x}", e),
+            // Only these vectors push an error code; for the rest the field is just 0. 8 | 10..=14  handled above
+            17 | 21 | 29 | 30 => write!(f, "error code {:#x}", e),
             _ => write!(f, "no error code"),
         }
     }

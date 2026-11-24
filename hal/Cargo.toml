@@ -7,12 +7,15 @@ edition = "2024"
 test = false
 bench = false
 
+[lints.cargo]
+unused_dependencies = "allow" # acpica_sys is not used in architectures that dont support it
+
 [features]
 default = []
 
-board-qemu-virt = ["driver-pl011", "driver-fw-cfg", "driver-ramfb", "driver-gic-v2"]
+board-qemu-virt = ["driver-pl011", "driver-fw-cfg", "driver-ramfb", "driver-gic-v2", "driver-virtio-input"]
 board-rk3126 = ["driver-dw-8250", "driver-rk3126-cru", "driver-rk3126-vop"]
-board-qemu-x64 = ["driver-ns16550"]
+board-qemu-x64 = ["driver-ns16550", "driver-i8042"]
 
 driver-pl011 = []
 driver-gic-v2 = []
@@ -20,6 +23,9 @@ driver-fw-cfg = []
 driver-ramfb = ["driver-fw-cfg"]
 driver-dw-8250 = []
 driver-ns16550 = []
+driver-i8042 = []
+driver-virtio-mmio = []
+driver-virtio-input = ["driver-virtio-mmio"]
 driver-rk3126-cru = []
 driver-rk3126-vop = ["driver-rk3126-cru"]
 
