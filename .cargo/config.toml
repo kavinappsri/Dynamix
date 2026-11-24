@@ -34,7 +34,5 @@ rustflags = [
     "link-arg=/MAP:target/dynamix_x64.map",
 ]
 runner = [
-    "sh",
-    "-c",
     "scripts/run_x64.sh"
 ]

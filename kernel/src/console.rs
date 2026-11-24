@@ -1,36 +1,40 @@
-//! A small line-oriented console over a polling serial device.
+//! A small line-oriented console over an input stream and an output stream.
 
 use core::char;
 use alloc::string::String;
 
-use hal::Serial;
+use crate::io::{InputStream, OutputStream};
 
-/// A borrowed serial console with basic text, hexadecimal, and line input I/O.
+/// Basic text, hexadecimal, and line input I/O over borrowed streams.
+///
+/// Where the bytes come from and go to is up to the streams: a UART, a
+/// keyboard, a screen, or several outputs at once (see [`crate::io::Broadcast`]).
 pub struct Console<'a> {
-    uart: &'a dyn Serial,
+    input: &'a dyn InputStream,
+    output: &'a dyn OutputStream,
 }
 
 impl<'a> Console<'a> {
-    /// Creates a console that sends and receives bytes through `uart`.
-    pub const fn new(uart: &'a dyn Serial) -> Self {
-        Self { uart }
+    /// Creates a console that reads bytes from `input` and writes them to `output`.
+    pub const fn new(input: &'a dyn InputStream, output: &'a dyn OutputStream) -> Self {
+        Self { input, output }
     }
 
     /// Writes `text` without appending a line ending.
     pub fn write(&self, text: &str) {
-        self.uart.write_str(text);
+        self.output.write_str(text);
     }
 
     /// Writes `text` followed by a newline.
     pub fn writeln(&self, text: &str) {
-        self.uart.write_str(text);
-        self.uart.write_str("\n");
+        self.output.write_str(text);
+        self.output.write_str("\n");
     }
 
     /// Writes every byte in `bytes` verbatim.
     pub fn write_bytes(&self, bytes: &[u8]) {
         for byte in bytes {
-            self.uart.write_byte(*byte);
+            self.output.write_byte(*byte);
         }
     }
 
@@ -43,27 +47,29 @@ impl<'a> Console<'a> {
         }
     }
 
+    /// Reads one line into `buffer`, echoing what is typed to the output and
+    /// handling backspace. The line ending is not stored.
     pub fn read_line(&mut self, buffer: &mut String) {
         loop {
-            let byte = self.uart.read_byte();
+            let byte = self.input.read_byte();
 
             match byte {
                 b'\n' | b'\r' => {
-                    self.uart.write_byte(b'\n');
+                    self.output.write_byte(b'\n');
                     break;
                 }
                 b'\x08' | b'\x7F' => {
                     if !buffer.is_empty() {
                         buffer.pop();
 
-                        self.uart.write_byte(b'\x08');
-                        self.uart.write_byte(b' ');
-                        self.uart.write_byte(b'\x08');
+                        self.output.write_byte(b'\x08');
+                        self.output.write_byte(b' ');
+                        self.output.write_byte(b'\x08');
                     }
                 }
                 _ => {
                     buffer.push(char::from(byte));
-                    self.uart.write_byte(byte);
+                    self.output.write_byte(byte);
                 }
             }
         }
@@ -72,8 +78,7 @@ impl<'a> Console<'a> {
 
 impl<'a> core::fmt::Write for Console<'a> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        self.uart.write_str(s);
+        self.output.write_str(s);
         Ok(())
     }
 }
-

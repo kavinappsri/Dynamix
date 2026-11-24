@@ -1,7 +1,7 @@
 #!/bin/zsh
 
 mkdir -p esp/EFI/BOOT
-cp target/x86_64-unknown-uefi/release/dynamix_kernel.efi esp/EFI/BOOT/BOOTX64.EFI
+cp "$1" esp/EFI/BOOT/BOOTX64.EFI
 
 # -no-reboot: a triple fault ends QEMU (with the reason in the -d log) instead
 # of rebooting in a loop. Do NOT add -no-shutdown: it keeps QEMU alive, paused,

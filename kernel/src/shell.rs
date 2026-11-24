@@ -1,4 +1,4 @@
-//! UART shell
+//! The command shell.
 
 
 use core::fmt::Write;
@@ -12,12 +12,13 @@ use crate::global::HEAP;
 use hal::driver_traits::framebuffer::Framebuffer;
 use hal::services::fault::{self, CrashKind};
 
+
 pub enum Command {
     Fill,
     Shutdown,
     Stats,
     Crash,
-    Dmesg,
+    Lslog,
     Sleep,
     Uptime,
     Lsdev,
@@ -25,7 +26,8 @@ pub enum Command {
 }
 
 /// Runs the command loop forever.
-pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
+/// `display` is only for the `fill` command; without one the shell works the same, minus `fill`.
+pub fn run(console: &mut Console, display: Option<&dyn Framebuffer>) -> ! {
     let mut input_buffer = String::new();
 
     loop {
@@ -49,7 +51,7 @@ pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
             Some(&"shutdown") => Command::Shutdown,
             Some(&"stats") => Command::Stats,
             Some(&"crash") => Command::Crash,
-            Some(&"dmesg") => Command::Dmesg,
+            Some(&"lslog") => Command::Lslog,
             Some(&"sleep") => Command::Sleep,
             Some(&"uptime") => Command::Uptime,
             Some(&"lsdev") => Command::Lsdev,
@@ -58,6 +60,10 @@ pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
 
         match cmd {
             Command::Fill => {
+                let Some(display) = display else {
+                    let _ = writeln!(console, "No display");
+                    continue;
+                };
                 let Some(color) = args.get(1) else {
                     let _ = writeln!(console, "Usage: fill <color>");
                     continue;
@@ -127,7 +133,7 @@ pub fn run(console: &mut Console, display: &dyn Framebuffer) -> ! {
                     }
                 }
             }
-            Command::Dmesg => {
+            Command::Lslog => {
                 let dumped = hal::services::klog::dump(console, 0);
                 let stats = hal::services::klog::stats();
                 if dumped.lost > 0 || stats.dropped > 0 {
